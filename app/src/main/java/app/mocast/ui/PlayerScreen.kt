@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.mocast.data.DisplayMode
+import app.mocast.data.TranslationMode
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -194,11 +195,12 @@ fun PlayerScreen(
                         } else {
                             when (state.translationStatus) {
                                 TranslationStatus.Loading ->
-                                    "翻译中 ${state.translationDone}/${state.translationTotal}"
-                                TranslationStatus.Ready -> "已译 ${state.translationDone} 条"
+                                    "本段 ${state.translationDone}/${state.translationTotal}"
+                                TranslationStatus.Ready -> "本段已译 ${state.translationDone} 条"
                                 TranslationStatus.NoKey -> "未配置 Key"
                                 TranslationStatus.Error -> "翻译失败"
-                                TranslationStatus.Idle -> "未翻译"
+                                TranslationStatus.Idle -> if (state.settings.translationMode == TranslationMode.KEYWORD)
+                                    "未翻译 · 关键词" else "未翻译 · 完整"
                             }
                         },
                         style = MaterialTheme.typography.labelSmall,
@@ -211,10 +213,15 @@ fun PlayerScreen(
                             }
                         }
                         TextButton(
-                            enabled = state.translationStatus != TranslationStatus.Loading,
+                            enabled = true,
                             onClick = onTranslate
                         ) {
-                            Text(if (state.translationStatus == TranslationStatus.Loading) "翻译中" else "翻译")
+                            Text(
+                                if (state.translationStatus == TranslationStatus.Loading) "停止"
+                                else if (state.settings.translationMode == TranslationMode.KEYWORD)
+                                    "关键词·${state.settings.keywordLevel.label}"
+                                else "翻译"
+                            )
                         }
                     }
                 }
@@ -227,7 +234,8 @@ fun PlayerScreen(
                 ) {
                     listOf(
                         DisplayMode.ORIGINAL to "原文",
-                        DisplayMode.TRANSLATED to "译文",
+                        DisplayMode.TRANSLATED to
+                            if (state.settings.translationMode == TranslationMode.KEYWORD) "生词" else "译文",
                         DisplayMode.BILINGUAL to "双语"
                     ).forEach { (mode, label) ->
                         FilterChip(
@@ -311,7 +319,9 @@ fun PlayerScreen(
                                             Text(
                                                 translation,
                                                 style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.primary
+                                                color = if (state.settings.translationMode == TranslationMode.KEYWORD)
+                                                    MaterialTheme.colorScheme.secondary
+                                                else MaterialTheme.colorScheme.primary
                                             )
                                         }
                                     }

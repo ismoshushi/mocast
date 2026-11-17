@@ -1,0 +1,153 @@
+name: Release APK
+
+# 推 v0.30 这种 tag 时打包并发布；也可以在 Actions 页面手动跑一次（只出 artifact，不发布）。
+# 需要四个仓库 secrets：
+#   KEYSTORE_BASE64   keystore 文件的 base64（base64 -w0 release.jks）
+#   STORE_PASSWORD    证书库密码
+#   KEY_ALIAS         密钥别名
+#   KEY_PASSWORD      密钥密码
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version_name: ${{ steps.version.outputs.name }}
+      version_code: ${{ steps.version.outputs.code }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: 还原签名文件
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::error::缺少 KEYSTORE_BASE64 / STORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD 这些 secrets"
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > release.jks
+          {
+            echo "storeFile=release.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+
+      - name: 读取版本号
+        id: version
+        run: |
+          set -euo pipefail
+          code=$(grep -oP 'versionCode\s*=\s*\K[0-9]+' app/build.gradle.kts)
+          name=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: 校验 tag 与 versionName 是否一致
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$tag" != "$VERSION_NAME" ]; then
+            echo "::error::tag 是 v$tag，versionName 是 $VERSION_NAME，先把 app/build.gradle.kts 改齐再打 tag"
+            exit 1
+          fi
+
+      - name: 打包 release
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: 整理产物
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: |
+          set -euo pipefail
+          apk=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
+          mkdir -p dist
+          cp "$apk" "dist/MoCast-$VERSION_NAME.apk"
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MoCast-${{ steps.version.outputs.name }}
+          path: dist/*.apk
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: MoCast-${{ needs.build.outputs.version_name }}
+          path: dist
+
+      - name: 生成 update.json
+        env:
+          VERSION_CODE: ${{ needs.build.outputs.version_code }}
+          VERSION_NAME: ${{ needs.build.outputs.version_name }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          apk="dist/MoCast-$VERSION_NAME.apk"
+          sha=$(sha256sum "$apk" | cut -d' ' -f1)
+          size=$(stat -c%s "$apk")
+          notes=$(git log -1 --pretty=%B)
+          export SHA="$sha" SIZE="$size" NOTES="$notes"
+          python3 - <<'PY'
+          import json, os
+
+          data = {
+              "versionCode": int(os.environ["VERSION_CODE"]),
+              "versionName": os.environ["VERSION_NAME"],
+              "notes": os.environ["NOTES"].strip(),
+              "apk": {
+                  "url": f"https://github.com/{os.environ['REPO']}/releases/download/{os.environ['TAG']}/MoCast-{os.environ['VERSION_NAME']}.apk",
+                  "sha256": os.environ["SHA"],
+                  "size": int(os.environ["SIZE"]),
+              },
+          }
+          with open("update.json", "w", encoding="utf-8") as f:
+              json.dump(data, f, ensure_ascii=False, indent=2)
+          print(open("update.json", encoding="utf-8").read())
+          PY
+
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_NAME: ${{ needs.build.outputs.version_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/MoCast-$VERSION_NAME.apk" \
+            update.json \
+            --title "MoCast $VERSION_NAME" \
+            --notes "$(git log -1 --pretty=%B)" \
+            --verify-tag

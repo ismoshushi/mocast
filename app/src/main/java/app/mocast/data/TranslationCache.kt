@@ -5,19 +5,20 @@ import org.json.JSONArray
 import java.io.File
 
 /**
- * 每集一份译文缓存，按语言分开。文件名 <episodeId>_<lang>.json。
+ * 每集一份译文缓存，按「语言 + 翻译模式 + 难度」分开。
+ * 文件名 <episodeId>_<variant>.json，variant 来自 Settings.translationVariant。
  */
 class TranslationCache(context: Context) {
 
     private val dir = File(context.filesDir, "translations").apply { mkdirs() }
 
-    private fun fileOf(episodeId: String, lang: String): File {
-        val safeLang = lang.replace(Regex("[^A-Za-z0-9\\u4e00-\\u9fa5]"), "_")
-        return File(dir, "${episodeId}_$safeLang.json")
+    private fun fileOf(episodeId: String, variant: String): File {
+        val safe = variant.replace(Regex("[^A-Za-z0-9\\u4e00-\\u9fa5]"), "_")
+        return File(dir, "${episodeId}_$safe.json")
     }
 
-    fun load(episodeId: String, lang: String): List<String>? {
-        val file = fileOf(episodeId, lang)
+    fun load(episodeId: String, variant: String): List<String>? {
+        val file = fileOf(episodeId, variant)
         if (!file.exists()) return null
         return runCatching {
             val arr = JSONArray(file.readText())
@@ -25,11 +26,11 @@ class TranslationCache(context: Context) {
         }.getOrNull()
     }
 
-    fun save(episodeId: String, lang: String, items: List<String>) {
+    fun save(episodeId: String, variant: String, items: List<String>) {
         runCatching {
             val arr = JSONArray()
             items.forEach { arr.put(it) }
-            fileOf(episodeId, lang).writeText(arr.toString())
+            fileOf(episodeId, variant).writeText(arr.toString())
         }
     }
 }

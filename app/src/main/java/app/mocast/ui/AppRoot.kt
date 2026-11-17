@@ -25,73 +25,95 @@ import kotlinx.coroutines.delay
 fun AppRoot(vm: AppViewModel) {
     val state by vm.ui.collectAsStateWithLifecycle()
 
-    BackHandler(enabled = state.screen != Screen.Home) { vm.back() }
+    MoCastTheme(state.settings.themeMode) {
+        BackHandler(enabled = state.screen != Screen.Home) { vm.back() }
 
-    Box(Modifier.fillMaxSize()) {
-        when (val screen = state.screen) {
-            Screen.Home -> HomeScreen(
-                state = state,
-                onAddClick = vm::openAddDialog,
-                onDismissAdd = vm::dismissAddDialog,
-                onSubmit = vm::addSubscription,
-                onOpenShow = vm::openShow,
-                onSettings = vm::openSettings
-            )
+        Box(Modifier.fillMaxSize()) {
+            when (val screen = state.screen) {
+                Screen.Home -> HomeScreen(
+                    state = state,
+                    onAddClick = vm::openAddDialog,
+                    onDismissAdd = vm::dismissAddDialog,
+                    onSubmit = vm::addSubscription,
+                    onOpenShow = vm::openShow,
+                    onSettings = vm::openSettings
+                )
 
-            Screen.Settings -> SettingsScreen(
-                settings = state.settings,
-                onBack = vm::back,
-                onSave = vm::saveSettings
-            )
+                Screen.Settings -> SettingsScreen(
+                    state = state,
+                    onBack = vm::back,
+                    onOpenTranslation = vm::openTranslation,
+                    onOpenAbout = vm::openAbout,
+                    onThemeMode = vm::setThemeMode
+                )
 
-            is Screen.ShowDetail -> ShowScreen(
-                state = state,
-                onBack = vm::back,
-                onRefresh = { vm.refresh(screen.showId) },
-                onOpenEpisode = vm::openEpisode,
-                onDelete = { vm.requestDelete(screen.showId) },
-                onConfirmDelete = vm::confirmDelete,
-                onCancelDelete = vm::cancelDelete
-            )
+                Screen.Translation -> TranslationScreen(
+                    settings = state.settings,
+                    onBack = vm::back,
+                    onSave = vm::saveSettings,
+                    onMode = vm::setTranslationMode,
+                    onLevel = vm::setKeywordLevel,
+                    onAutoExtend = vm::setAutoExtend
+                )
 
-            is Screen.Player -> PlayerScreen(
-                state = state,
-                onBack = vm::back,
-                onTogglePlay = vm::togglePlay,
-                onSeek = vm::seekTo,
-                onSeekBy = vm::seekBy,
-                onSpeed = vm::setSpeed,
-                onTranslate = vm::translateCurrent,
-                onMode = vm::setDisplayMode
-            )
-        }
+                Screen.About -> AboutScreen(
+                    state = state,
+                    onBack = vm::back,
+                    onCheck = vm::checkUpdate,
+                    onDownload = vm::downloadUpdate,
+                    onInstall = vm::installUpdate,
+                    canInstall = vm::canInstallUpdate
+                )
 
-        state.error?.let { message ->
-            LaunchedEffect(message) {
-                delay(4000)
-                vm.consumeError()
+                is Screen.ShowDetail -> ShowScreen(
+                    state = state,
+                    onBack = vm::back,
+                    onRefresh = { vm.refresh(screen.showId) },
+                    onOpenEpisode = vm::openEpisode,
+                    onDelete = { vm.requestDelete(screen.showId) },
+                    onConfirmDelete = vm::confirmDelete,
+                    onCancelDelete = vm::cancelDelete
+                )
+
+                is Screen.Player -> PlayerScreen(
+                    state = state,
+                    onBack = vm::back,
+                    onTogglePlay = vm::togglePlay,
+                    onSeek = vm::seekTo,
+                    onSeekBy = vm::seekBy,
+                    onSpeed = vm::setSpeed,
+                    onTranslate = vm::translateCurrent,
+                    onMode = vm::setDisplayMode
+                )
             }
-            Surface(
-                color = MaterialTheme.colorScheme.inverseSurface,
-                contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-                shape = RoundedCornerShape(20.dp),
-                shadowElevation = 6.dp,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 20.dp)
-                    .fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+
+            state.error?.let { message ->
+                LaunchedEffect(message) {
+                    delay(4000)
+                    vm.consumeError()
+                }
+                Surface(
+                    color = MaterialTheme.colorScheme.inverseSurface,
+                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                    shape = RoundedCornerShape(20.dp),
+                    shadowElevation = 6.dp,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 20.dp)
+                        .fillMaxWidth()
                 ) {
-                    Text(
-                        message,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = vm::consumeError) { Text("知道了") }
+                    Row(
+                        modifier = Modifier.padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            message,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = vm::consumeError) { Text("知道了") }
+                    }
                 }
             }
         }

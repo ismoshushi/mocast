@@ -1,6 +1,7 @@
 package app.mocast.net
 
 import app.mocast.data.Settings
+import app.mocast.data.TranslationMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -11,7 +12,7 @@ import org.json.JSONObject
 
 class TranslationClient {
 
-    suspend fun translate(settings: Settings, texts: List<String>): List<String> =
+    suspend fun translate(settings: Settings, texts: List<String>, firstNumber: Int = 1): List<String> =
         withContext(Dispatchers.IO) {
             if (texts.isEmpty()) return@withContext emptyList()
             val url = settings.baseUrl.trimEnd('/') + "/chat/completions"
@@ -27,11 +28,11 @@ class TranslationClient {
                 put("messages", JSONArray().apply {
                     put(JSONObject().apply {
                         put("role", "system")
-                        put("content", systemPrompt(settings.targetLang))
+                        put("content", systemPrompt(settings))
                     })
                     put(JSONObject().apply {
                         put("role", "user")
-                        put("content", userPrompt(settings.targetLang, texts))
+                        put("content", userPrompt(settings, texts))
                     })
                 })
             }
@@ -52,29 +53,56 @@ class TranslationClient {
                     ?.optJSONObject("message")
                     ?.optString("content")
                     .orEmpty()
-                parse(content, texts.size)
+                parse(content, texts.size, settings.translationMode)
             }
         }
 
     private fun isZhipu(baseUrl: String): Boolean =
         baseUrl.contains("bigmodel.cn", ignoreCase = true)
 
-    private fun systemPrompt(lang: String) =
-        "你是播客字幕翻译引擎。把用户给出的每条字幕逐条翻译成$lang，保持口语、简洁、连贯。" +
-            "只输出一个 JSON 字符串数组，元素数量必须与输入条数完全一致，不要解释、不要加序号。"
+    private fun systemPrompt(settings: Settings): String = when (settings.translationMode) {
+        TranslationMode.FULL ->
+            "你是播客字幕翻译引擎。把用户给出的每条字幕逐条翻译成${settings.targetLang}，保持口语、简洁、连贯。" +
+                "只输出一个 JSON 字符串数组，元素数量必须与输入条数完全一致，不要解释、不要加序号。"
 
-    private fun userPrompt(lang: String, texts: List<String>): String {
-        val numbered = texts.mapIndexed { i, t -> "${i + 1}. ${t.replace("\n", " ")}" }
-        return "把下面 ${texts.size} 条字幕逐条翻译成$lang，输出长度为 ${texts.size} 的 JSON 数组。\n\n" +
-            numbered.joinToString("\n")
+        TranslationMode.KEYWORD ->
+            "你是英语生词标注引擎，服务对象是练听力的中国学习者，当前词汇层级为「${settings.keywordLevel.label}」" +
+                "（约 ${settings.keywordLevel.vocab} 词，${settings.keywordLevel.hint}）。规则：\n" +
+                "1) 只标注超出该层级的词（比它更难一档及以上的词），层级内的常见词、专有名词、人名地名一律不标；\n" +
+                "2) 每条字幕输出一个字符串：「序号|生词列表」，序号必须与输入编号一致；" +
+                "生词列表格式为 `word 词性. 中文释义`，多个用「；」分隔，每条最多 3 个；\n" +
+                "3) 每条字幕都要有对应元素，没有超纲词就输出「序号|」，后面留空；\n" +
+                "4) 释义只用中文写，不要照抄英文原词，也不要把英文名解释成「人名」「软件名」糊过去；\n" +
+                "5) 人名、地名、公司名、产品名、软件名、代号缩写一律不标，也不要写「不标注」「专有名词」这类说明；\n" +
+                "6) 只收真正超出该层级的词，computer/product/name/people/time 这类初级常见词不要标；宁可漏标也不要凑数；\n" +
+                "示例：[\"1|installer n. 安装程序\",\"2|\",\"3|junkware n. 捆绑垃圾软件\"]\n" +
+                "只输出这个 JSON 字符串数组，不要解释。"
     }
 
-    private fun parse(content: String, expected: Int): List<String> {
+    private fun userPrompt(settings: Settings, texts: List<String>): String {
+        val numbered = texts.mapIndexed { i, t -> "${i + 1}. ${t.replace("\n", " ")}" }
+        val task = when (settings.translationMode) {
+            TranslationMode.FULL ->
+                "把下面 ${texts.size} 条字幕逐条翻译成${settings.targetLang}，输出长度为 ${texts.size} 的 JSON 数组"
+            TranslationMode.KEYWORD ->
+                "标注下面 ${texts.size} 条字幕里超出「${settings.keywordLevel.label}」层级的生词，" +
+                    "按「序号|生词释义」输出 ${texts.size} 个元素，序号要与下面编号一致"
+        }
+        return "$task。\n\n" + numbered.joinToString("\n")
+    }
+
+    private fun parse(
+        content: String,
+        expected: Int,
+        mode: TranslationMode
+    ): List<String> {
         val cleaned = content.trim()
             .removePrefix("```json")
             .removePrefix("```")
             .removeSuffix("```")
             .trim()
+        if (mode == TranslationMode.KEYWORD) return parseIndexed(cleaned, expected)
+
         val start = cleaned.indexOf('[')
         val end = cleaned.lastIndexOf(']')
         if (start >= 0 && end > start) {
@@ -93,5 +121,52 @@ class TranslationClient {
         val out = ArrayList<String>(expected)
         for (i in 0 until expected) out.add(lines.getOrElse(i) { "" })
         return out
+    }
+
+    /**
+     * 生词标注按「序号|内容」对齐：模型漏条、多给、顺序乱都不会错位到别的字幕上。
+     * 有的模型会把多条塞进一个 JSON 元素里（形如 `36|a n. 甲|2|b n. 乙`），
+     * 所以这里不按 JSON 元素切，而是扫全文里的「数字|」标记，按标记切段。
+     */
+    private fun parseIndexed(cleaned: String, expected: Int): List<String> {
+        val out = MutableList(expected) { "" }
+        fun hasChinese(text: String) = text.any { it.code in 0x4E00..0x9FFF }
+
+        val markers = Regex("""(\d{1,4})\s*\|""").findAll(cleaned).toList()
+        if (markers.isEmpty()) {
+            // 完全没有序号：只可能是一条一条按行给的，按行兜底
+            cleaned.split("\n")
+                .map { it.trim().trimStart('-', '*', ' ') }
+                .filter { it.isNotEmpty() && hasChinese(it) }
+                .take(expected)
+                .forEachIndexed { i, line -> out[i] = cleanEntry(line) }
+            return out
+        }
+
+        markers.forEachIndexed { i, marker ->
+            val index = marker.groupValues[1].toIntOrNull() ?: return@forEachIndexed
+            val bodyStart = marker.range.last + 1
+            val bodyEnd = markers.getOrNull(i + 1)?.range?.first ?: cleaned.length
+            if (index !in 1..expected) return@forEachIndexed
+            val body = cleanEntry(cleaned.substring(bodyStart, bodyEnd))
+            // 只给英文单词、或释义里根本没中文的（「人名」「软件名」糊过去）都留空
+            val chineseCount = body.count { it.code in 0x4E00..0x9FFF }
+            if (body.isNotBlank() && chineseCount >= 2 && out[index - 1].isBlank()) {
+                out[index - 1] = body
+            }
+        }
+        return out
+    }
+
+    /** 去掉模型带出来的引号、逗号、括号等包装，并去掉重复释义段 */
+    private fun cleanEntry(raw: String): String {
+        val junk = "\"'，,；;、:：|[]{}（）() \n".toSet()
+        val cleaned = raw.trim().trim { it in junk }.replace(Regex("[；;]+$"), "").trim()
+        // 模型常把同一段释义重复输出（「发生；出现；产生；发生；出现；产生」），这里去重
+        val parts = cleaned.split('；', ';').map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.size <= 1) return cleaned.take(120)
+        val seen = LinkedHashSet<String>()
+        for (p in parts) seen.add(p)
+        return seen.joinToString("；").replace(Regex("[；;]+$"), "").take(120)
     }
 }

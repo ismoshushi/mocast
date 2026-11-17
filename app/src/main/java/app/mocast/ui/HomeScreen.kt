@@ -64,7 +64,7 @@ fun HomeScreen(
                     Column {
                         Text("MoCast", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "0.02 · 双语字幕 · 订阅 · 播放",
+                            "${app.mocast.BuildConfig.VERSION_NAME} · 双语字幕 · 订阅 · 播放",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -12,3 +12,6 @@ keystore.properties
 *.jks
 *.keystore
 .workbuddy/
+docs/
+hs_err_pid*.log
+update.json

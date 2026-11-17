@@ -11,7 +11,6 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import app.mocast.ui.AppRoot
 import app.mocast.ui.AppViewModel
-import app.mocast.ui.MoCastTheme
 
 class MainActivity : ComponentActivity() {
 
@@ -20,9 +19,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MoCastTheme {
-                AppRoot(viewModel)
-            }
+            AppRoot(viewModel)
         }
         askNotificationPermission()
     }
