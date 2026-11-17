@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">MoCast</string>
+    <string name="playback_channel">播放控制</string>
+</resources>
