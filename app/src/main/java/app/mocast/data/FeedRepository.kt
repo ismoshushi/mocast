@@ -56,6 +56,8 @@ class FeedRepository(private val store: Store) {
 
     fun shows(): List<Show> = store.listShows()
 
+    fun removeShow(showId: String) = store.removeShow(showId)
+
     fun progressOf(episodeId: String): Long = store.progressOf(episodeId)
 
     fun saveProgress(episodeId: String, positionMs: Long) = store.saveProgress(episodeId, positionMs)

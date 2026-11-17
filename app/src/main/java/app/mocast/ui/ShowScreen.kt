@@ -15,7 +15,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -25,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -40,7 +43,10 @@ fun ShowScreen(
     state: UiState,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
-    onOpenEpisode: (Episode) -> Unit
+    onOpenEpisode: (Episode) -> Unit,
+    onDelete: () -> Unit,
+    onConfirmDelete: () -> Unit,
+    onCancelDelete: () -> Unit
 ) {
     val show = state.currentShow ?: return
     Scaffold(
@@ -67,6 +73,9 @@ fun ShowScreen(
                         IconButton(onClick = onRefresh) {
                             Icon(Icons.Default.Refresh, contentDescription = "刷新")
                         }
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Default.Delete, contentDescription = "取消订阅")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -133,6 +142,20 @@ fun ShowScreen(
                 ) { onOpenEpisode(episode) }
             }
         }
+    }
+
+    if (state.confirmDeleteShowId != null) {
+        AlertDialog(
+            onDismissRequest = onCancelDelete,
+            title = { Text("取消订阅") },
+            text = { Text("会删掉这个节目和已经缓存的单集，播放进度保留。") },
+            confirmButton = {
+                TextButton(onClick = onConfirmDelete) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = onCancelDelete) { Text("取消") }
+            }
+        )
     }
 }
 

@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.mocast.data.DisplayMode
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -53,7 +54,9 @@ fun PlayerScreen(
     onTogglePlay: () -> Unit,
     onSeek: (Long) -> Unit,
     onSeekBy: (Long) -> Unit,
-    onSpeed: (Float) -> Unit
+    onSpeed: (Float) -> Unit,
+    onTranslate: () -> Unit,
+    onMode: (DisplayMode) -> Unit
 ) {
     val episode = state.currentEpisode ?: return
     val showTitle = state.currentShow?.title.orEmpty()
@@ -105,6 +108,7 @@ fun PlayerScreen(
             Spacer(Modifier.height(12.dp))
             Slider(
                 value = (scrub ?: state.positionMs.toFloat()).coerceIn(0f, total.toFloat()),
+                valueRange = 0f..total.toFloat(),
                 onValueChange = { scrub = it },
                 onValueChangeFinished = {
                     scrub?.let { onSeek(it.toLong()) }
@@ -170,21 +174,61 @@ fun PlayerScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .padding(top = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("字幕", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    when (state.transcriptStatus) {
-                        TranscriptStatus.Loading -> "加载中…"
-                        TranscriptStatus.Ready -> "${state.cues.size} 条"
-                        TranscriptStatus.Empty -> "本集没有官方字幕"
-                        TranscriptStatus.Error -> "字幕加载失败"
-                        TranscriptStatus.Idle -> ""
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (state.transcriptStatus != TranscriptStatus.Ready) {
+                            when (state.transcriptStatus) {
+                                TranscriptStatus.Loading -> "加载中…"
+                                TranscriptStatus.Empty -> "本集没有官方字幕"
+                                TranscriptStatus.Error -> "字幕加载失败"
+                                else -> ""
+                            }
+                        } else {
+                            when (state.translationStatus) {
+                                TranslationStatus.Loading ->
+                                    "翻译中 ${state.translationDone}/${state.translationTotal}"
+                                TranslationStatus.Ready -> "已译 ${state.translationDone} 条"
+                                TranslationStatus.NoKey -> "未配置 Key"
+                                TranslationStatus.Error -> "翻译失败"
+                                TranslationStatus.Idle -> "未翻译"
+                            }
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (state.transcriptStatus == TranscriptStatus.Ready) {
+                        TextButton(
+                            enabled = state.translationStatus != TranslationStatus.Loading,
+                            onClick = onTranslate
+                        ) {
+                            Text(if (state.translationStatus == TranslationStatus.Loading) "翻译中" else "翻译")
+                        }
+                    }
+                }
+            }
+
+            if (state.transcriptStatus == TranscriptStatus.Ready) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        DisplayMode.ORIGINAL to "原文",
+                        DisplayMode.TRANSLATED to "译文",
+                        DisplayMode.BILINGUAL to "双语"
+                    ).forEach { (mode, label) ->
+                        FilterChip(
+                            selected = state.settings.displayMode == mode,
+                            onClick = { onMode(mode) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
             }
 
             when (state.transcriptStatus) {
@@ -192,7 +236,7 @@ fun PlayerScreen(
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
                             if (state.transcriptStatus == TranscriptStatus.Empty)
-                                "这一集没有提供官方字幕。\n0.02 会用本机 ASR 补一条。"
+                                "这一集没有提供官方字幕。\n0.03 会用本机 ASR 补一条。"
                             else if (state.transcriptStatus == TranscriptStatus.Error)
                                 "字幕加载失败，点返回重进可重试。"
                             else "…",
@@ -227,11 +271,25 @@ fun PlayerScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.width(56.dp)
                                     )
-                                    Text(
-                                        cue.text,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = if (active) FontWeight.Medium else FontWeight.Normal
-                                    )
+                                    val translation = state.translated.getOrNull(index).orEmpty()
+                                    val mode = state.settings.displayMode
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        if (mode != DisplayMode.TRANSLATED || translation.isBlank()) {
+                                            Text(
+                                                cue.text,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (active) FontWeight.Medium else FontWeight.Normal
+                                            )
+                                        }
+                                        if (translation.isNotBlank() && mode != DisplayMode.ORIGINAL) {
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(
+                                                translation,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }

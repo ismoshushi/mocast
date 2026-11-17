@@ -17,11 +17,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -51,7 +53,8 @@ fun HomeScreen(
     onAddClick: () -> Unit,
     onDismissAdd: () -> Unit,
     onSubmit: (String) -> Unit,
-    onOpenShow: (String) -> Unit
+    onOpenShow: (String) -> Unit,
+    onSettings: () -> Unit
 ) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -61,10 +64,15 @@ fun HomeScreen(
                     Column {
                         Text("MoCast", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "0.01 · 订阅 · 播放 · 官方字幕",
+                            "0.02 · 双语字幕 · 订阅 · 播放",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "设置")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

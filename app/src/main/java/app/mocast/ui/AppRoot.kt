@@ -30,14 +30,24 @@ fun AppRoot(vm: AppViewModel) {
                 onAddClick = vm::openAddDialog,
                 onDismissAdd = vm::dismissAddDialog,
                 onSubmit = vm::addSubscription,
-                onOpenShow = vm::openShow
+                onOpenShow = vm::openShow,
+                onSettings = vm::openSettings
+            )
+
+            Screen.Settings -> SettingsScreen(
+                settings = state.settings,
+                onBack = vm::back,
+                onSave = vm::saveSettings
             )
 
             is Screen.ShowDetail -> ShowScreen(
                 state = state,
                 onBack = vm::back,
                 onRefresh = { vm.refresh(screen.showId) },
-                onOpenEpisode = vm::openEpisode
+                onOpenEpisode = vm::openEpisode,
+                onDelete = { vm.requestDelete(screen.showId) },
+                onConfirmDelete = vm::confirmDelete,
+                onCancelDelete = vm::cancelDelete
             )
 
             is Screen.Player -> PlayerScreen(
@@ -46,7 +56,9 @@ fun AppRoot(vm: AppViewModel) {
                 onTogglePlay = vm::togglePlay,
                 onSeek = vm::seekTo,
                 onSeekBy = vm::seekBy,
-                onSpeed = vm::setSpeed
+                onSpeed = vm::setSpeed,
+                onTranslate = vm::translateCurrent,
+                onMode = vm::setDisplayMode
             )
         }
 
