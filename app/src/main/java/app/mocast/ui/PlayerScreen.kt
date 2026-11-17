@@ -35,6 +35,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.mocast.data.DisplayMode
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -254,6 +256,28 @@ fun PlayerScreen(
 
                 TranscriptStatus.Ready -> {
                     val activeIndex = state.cues.indexOfLast { it.startMs <= state.positionMs }
+                    var autoFollow by remember { mutableStateOf(true) }
+                    var programmatic by remember { mutableStateOf(false) }
+
+                    // 播放推进到新句时把当前句滚进视野；用户手动滑动后暂停 4 秒再恢复
+                    LaunchedEffect(activeIndex, autoFollow) {
+                        if (!autoFollow || activeIndex < 0 || state.cues.isEmpty()) return@LaunchedEffect
+                        val target = (activeIndex - 1).coerceAtLeast(0)
+                        if (target != listState.firstVisibleItemIndex) {
+                            programmatic = true
+                            listState.animateScrollToItem(target)
+                            programmatic = false
+                        }
+                    }
+                    LaunchedEffect(listState.isScrollInProgress) {
+                        if (listState.isScrollInProgress && !programmatic) {
+                            autoFollow = false
+                            delay(4000)
+                            autoFollow = true
+                        }
+                    }
+
+                    Box(Modifier.fillMaxSize()) {
                     LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                         itemsIndexed(state.cues) { index, cue ->
                             val active = index == activeIndex
@@ -293,6 +317,17 @@ fun PlayerScreen(
                                 }
                             }
                         }
+                    }
+
+                    // 手动滑动后 4 秒内不自动跟随，给一个「回到当前句」的入口
+                    if (!autoFollow) {
+                        TextButton(
+                            onClick = { autoFollow = true },
+                            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+                        ) {
+                            Text("回到当前句", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                     }
                 }
             }
