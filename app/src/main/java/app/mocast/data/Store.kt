@@ -52,15 +52,27 @@ class Store(context: Context) {
 
     fun saveProgress(episodeId: String, positionMs: Long) {
         if (episodeId.isBlank()) return
-        val all = JSONObject(prefs.getString(KEY_PROGRESS, "{}") ?: "{}")
+        val all = readProgress()
         all.put(episodeId, positionMs)
         prefs.edit().putString(KEY_PROGRESS, all.toString()).apply()
     }
 
-    fun progressOf(episodeId: String): Long {
-        val all = runCatching { JSONObject(prefs.getString(KEY_PROGRESS, "{}") ?: "{}") }
-            .getOrDefault(JSONObject())
-        return all.optLong(episodeId, 0L)
+    fun progressOf(episodeId: String): Long = readProgress().optLong(episodeId, 0L)
+
+    /** 历史数据里出现过被二次转义（`&quot;`）的进度串，这里兜底修掉，解析失败则从空表重建。 */
+    private fun readProgress(): JSONObject {
+        val raw = prefs.getString(KEY_PROGRESS, "{}").orEmpty()
+        return runCatching { JSONObject(raw) }.getOrElse {
+            runCatching {
+                JSONObject(
+                    raw.replace("&quot;", "\"")
+                        .replace("&apos;", "'")
+                        .replace("&lt;", "<")
+                        .replace("&gt;", ">")
+                        .replace("&amp;", "&")
+                )
+            }.getOrDefault(JSONObject())
+        }
     }
 
     companion object {
