@@ -18,6 +18,12 @@ class TranslationClient {
             val body = JSONObject().apply {
                 put("model", settings.model)
                 put("temperature", 0.2)
+                // 智谱 GLM 是混合思考模型，默认先吐 reasoning_content 再吐正文；
+                // 字幕翻译要的是稳定 JSON，关掉思考既省 token 也避免正文被挤压或格式漂移。
+                // 只在智谱域名下加，其他 OpenAI 兼容服务商不认识 thinking 字段会报参数错误。
+                if (isZhipu(settings.baseUrl)) {
+                    put("thinking", JSONObject().put("type", "disabled"))
+                }
                 put("messages", JSONArray().apply {
                     put(JSONObject().apply {
                         put("role", "system")
@@ -49,6 +55,9 @@ class TranslationClient {
                 parse(content, texts.size)
             }
         }
+
+    private fun isZhipu(baseUrl: String): Boolean =
+        baseUrl.contains("bigmodel.cn", ignoreCase = true)
 
     private fun systemPrompt(lang: String) =
         "你是播客字幕翻译引擎。把用户给出的每条字幕逐条翻译成$lang，保持口语、简洁、连贯。" +

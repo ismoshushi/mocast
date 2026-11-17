@@ -141,6 +141,10 @@ fun SettingsScreen(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 TextButton(onClick = {
+                    baseUrl = "https://open.bigmodel.cn/api/paas/v4"
+                    model = "glm-4.7-flash"
+                }) { Text("智谱 GLM") }
+                TextButton(onClick = {
                     baseUrl = "http://192.168.1.10:11434/v1"
                     model = "qwen2.5"
                 }) { Text("Ollama（改成本机 IP）") }
