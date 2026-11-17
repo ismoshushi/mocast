@@ -65,6 +65,7 @@ fun PlayerScreen(
     val total = if (state.durationMs > 0) state.durationMs else 1L
     var scrub by remember(state.currentEpisode?.id) { mutableStateOf<Float?>(null) }
     val listState = rememberLazyListState()
+    var autoFollow by remember(state.currentEpisode?.id) { mutableStateOf(true) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -204,6 +205,11 @@ fun PlayerScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (state.transcriptStatus == TranscriptStatus.Ready) {
+                        if (!autoFollow) {
+                            TextButton(onClick = { autoFollow = true }) {
+                                Text("回到当前句", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
                         TextButton(
                             enabled = state.translationStatus != TranslationStatus.Loading,
                             onClick = onTranslate
@@ -256,25 +262,20 @@ fun PlayerScreen(
 
                 TranscriptStatus.Ready -> {
                     val activeIndex = state.cues.indexOfLast { it.startMs <= state.positionMs }
-                    var autoFollow by remember { mutableStateOf(true) }
                     var programmatic by remember { mutableStateOf(false) }
 
-                    // 播放推进到新句时把当前句滚进视野；用户手动滑动后暂停 4 秒再恢复
+                    // 播放推进到新句时把当前句滚进视野；用户手动滑动后停止跟随，点「回到当前句」恢复
                     LaunchedEffect(activeIndex, autoFollow) {
                         if (!autoFollow || activeIndex < 0 || state.cues.isEmpty()) return@LaunchedEffect
                         val target = (activeIndex - 1).coerceAtLeast(0)
                         if (target != listState.firstVisibleItemIndex) {
                             programmatic = true
-                            listState.animateScrollToItem(target)
+                            listState.scrollToItem(target)
                             programmatic = false
                         }
                     }
                     LaunchedEffect(listState.isScrollInProgress) {
-                        if (listState.isScrollInProgress && !programmatic) {
-                            autoFollow = false
-                            delay(4000)
-                            autoFollow = true
-                        }
+                        if (listState.isScrollInProgress && !programmatic) autoFollow = false
                     }
 
                     Box(Modifier.fillMaxSize()) {
@@ -318,19 +319,9 @@ fun PlayerScreen(
                             }
                         }
                     }
-
-                    // 手动滑动后 4 秒内不自动跟随，给一个「回到当前句」的入口
-                    if (!autoFollow) {
-                        TextButton(
-                            onClick = { autoFollow = true },
-                            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
-                        ) {
-                            Text("回到当前句", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                    }
                 }
             }
         }
     }
+}
 }
