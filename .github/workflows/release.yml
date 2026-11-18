@@ -130,7 +130,15 @@ jobs:
 
           fi
 
-
+      - name: 获取 sherpa-onnx AAR
+      
+        run: |
+          set -euo pipefail
+          mkdir -p app/libs
+          curl -fSL --retry 3 -o app/libs/sherpa-onnx-1.13.8.aar \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-1.13.8.aar
+          echo "633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96  app/libs/sherpa-onnx-1.13.8.aar" | sha256sum -c -
+      
       - name: 打包 release
 
         run: |
