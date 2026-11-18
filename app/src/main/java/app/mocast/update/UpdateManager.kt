@@ -197,9 +197,9 @@ class UpdateManager(
     }
 
     companion object {
-        /** 仓库根目录的 update.json；换分支或换仓库只改这一行 */
+        /** GitHub Release 固定地址，永远指向最新一次 Release 的 update.json */
         const val DEFAULT_SOURCE =
-            "https://raw.githubusercontent.com/ismoshushi/mocast/master/update.json"
+            "https://github.com/ismoshushi/mocast/releases/latest/download/update.json"
     }
 }
 

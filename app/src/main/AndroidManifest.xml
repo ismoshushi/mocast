@@ -10,10 +10,17 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Android 11+ 包可见性：关于页「点开发者」要拉起微信，先声明才查得到。 -->
+    <queries>
+        <package android:name="com.tencent.mm" />
+    </queries>
+
     <application
         android:name=".MoCastApp"
         android:allowBackup="true"
         android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.MoCast">
 

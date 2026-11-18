@@ -1,11 +1,16 @@
 package app.mocast.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
@@ -36,16 +41,22 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.mocast.BuildConfig
@@ -108,30 +119,34 @@ fun AboutScreen(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(76.dp)
+                        .size(84.dp)
                         .shadow(
                             12.dp,
-                            RoundedCornerShape(20.dp),
+                            RoundedCornerShape(22.dp),
                             ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
                             spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
                         )
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(
-                            Brush.linearGradient(
-                                listOf(
-                                    MaterialTheme.colorScheme.primary,
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.78f)
-                                )
-                            )
-                        ),
+                        .clip(RoundedCornerShape(22.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        "M",
-                        color = androidx.compose.ui.graphics.Color.White,
-                        fontSize = 36.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    // 用应用真实桌面图标，替换掉之前的渐变方块 + 字母 M 占位。
+                    // 自适应图标（mipmap-anydpi 里的 XML）painterResource 读不了会闪退，这里按 384px 栅格化成位图。
+                    val appIcon = remember { runCatching { appIconBitmap(context) }.getOrNull() }
+                    if (appIcon != null) {
+                        Image(
+                            bitmap = appIcon,
+                            contentDescription = "MoCast",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Text(
+                            "M",
+                            color = Color.White,
+                            fontSize = 34.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
                 Spacer(Modifier.height(14.dp))
                 Text(
@@ -278,8 +293,76 @@ fun AboutScreen(
                 }) { Text("复制版本信息") }
             }
 
+            // 页脚：署名。整行可点（点小字不点准也能中），点了复制微信号并拉起微信。
+            Spacer(Modifier.height(28.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { copyWechatAndOpen(context) }
+                    .padding(vertical = 10.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "开发者：",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                )
+                Text(
+                    "魔术士",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    textDecoration = TextDecoration.Underline,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+                Text(
+                    " @2026",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                )
+            }
             Spacer(Modifier.height(24.dp))
         }
+    }
+}
+
+/** 开发者微信号：点署名直接复制，方便用户去微信加人。 */
+private const val DEVELOPER_WECHAT = "begin35"
+
+/**
+ * 复制微信号并拉起微信。
+ *
+ * 微信没有公开的「添加朋友-搜索」深链，能做的只有拉起 LauncherUI；
+ * 用显式组件名而不是只靠 getLaunchIntentForPackage，某些 ROM 上更稳。
+ */
+private fun copyWechatAndOpen(context: Context) {
+    context.getSystemService(ClipboardManager::class.java)
+        ?.setPrimaryClip(ClipData.newPlainText("微信号", DEVELOPER_WECHAT))
+
+    val explicit = Intent(Intent.ACTION_MAIN).apply {
+        addCategory(Intent.CATEGORY_LAUNCHER)
+        setClassName("com.tencent.mm", "com.tencent.mm.ui.LauncherUI")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    Toast.makeText(context, "已复制 $DEVELOPER_WECHAT，正在打开微信", Toast.LENGTH_SHORT).show()
+
+    // 先按显式组件拉起；拿不到再退回 getLaunchIntentForPackage（需 manifest 里声明 queries）。
+    val started = runCatching { context.startActivity(explicit) }.isSuccess ||
+        runCatching {
+            val fallback = context.packageManager.getLaunchIntentForPackage("com.tencent.mm")
+                ?: error("no wechat")
+            fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(fallback)
+        }.isSuccess
+
+    if (!started) {
+        Log.w("MoCastAbout", "open wechat failed")
+        Toast.makeText(
+            context,
+            "已复制 $DEVELOPER_WECHAT，微信没打开，手动去加",
+            Toast.LENGTH_LONG
+        ).show()
     }
 }
 
@@ -366,4 +449,15 @@ private fun Context.copyToClipboard(text: String) {
     val manager = getSystemService(android.content.ClipboardManager::class.java)
     manager?.setPrimaryClip(android.content.ClipData.newPlainText("MoCast", text))
     Toast.makeText(this, "已复制版本信息", Toast.LENGTH_SHORT).show()
+}
+
+/** 把自适应图标（adaptive-icon XML）栅格化成位图，Compose 的 Image 才能画。 */
+private fun appIconBitmap(context: Context): ImageBitmap {
+    val drawable = context.packageManager.getApplicationIcon(context.packageName)
+    val size = 384
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    drawable.setBounds(0, 0, size, size)
+    drawable.draw(canvas)
+    return bitmap.asImageBitmap()
 }

@@ -286,7 +286,7 @@ class DownloadManager(
         writeState(req, DownloadState.DOWNLOADING, downloaded, total, createdAt)
 
         try {
-            val request = Request.Builder()
+            val request = okhttp3.Request.Builder()
                 .url(req.audioUrl)
                 .header("User-Agent", Http.USER_AGENT)
                 .apply { if (downloaded > 0) header("Range", "bytes=$downloaded-") }

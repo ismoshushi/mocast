@@ -31,6 +31,16 @@ enum class TranslationMode(val label: String) {
     }
 }
 
+/** 首页播客列表右侧角标显示什么：未听数 / 已听数 / 两个都显示 */
+enum class ListBadgeMode(val label: String) {
+    UNPLAYED("未听数"), PLAYED("已听数"), BOTH("都显示");
+
+    companion object {
+        fun from(name: String?): ListBadgeMode =
+            entries.firstOrNull { it.name == name } ?: UNPLAYED
+    }
+}
+
 /**
  * 学习者词汇层级。关键词模式只标注超出所选层级的生词。
  * 词量参考常见大纲/考试要求：中考 1600、高考 3500、CET4 4500、CET6 6000、考研 8000、专八 12000+。
@@ -46,6 +56,36 @@ enum class KeywordLevel(val label: String, val vocab: String, val hint: String) 
     companion object {
         fun from(name: String?): KeywordLevel =
             entries.firstOrNull { it.name == name } ?: SENIOR
+    }
+}
+
+/**
+ * 音轨切换（仅多音轨的 YouTube 集用）：设置页里选两种语言，播放页只在这两种之间切。
+ * code 用 YouTube/ExoPlayer 的 ISO 语言码，`zh` 会匹配 zh-hans / zh-Hant 这类。
+ */
+enum class AudioLang(val code: String, val short: String, val label: String) {
+    EN("en", "EN", "English 英文"),
+    ZH("zh", "中", "中文（机器配音）"),
+    JA("ja", "日", "日本語 日语"),
+    KO("ko", "韩", "한국어 韩语"),
+    ES("es", "ES", "Español 西语"),
+    FR("fr", "FR", "Français 法语"),
+    DE("de", "DE", "Deutsch 德语"),
+    PT("pt", "PT", "Português 葡语"),
+    RU("ru", "RU", "Русский 俄语"),
+    HI("hi", "HI", "हिन्दी 印地语"),
+    IT("it", "IT", "Italiano 意语"),
+    ID("id", "ID", "Bahasa 印尼语"),
+    VI("vi", "VI", "Tiếng Việt 越南语"),
+    TH("th", "TH", "ไทย 泰语"),
+    TR("tr", "TR", "Türkçe 土语"),
+    AR("ar", "AR", "العربية 阿语");
+
+    companion object {
+        fun from(code: String?): AudioLang =
+            entries.firstOrNull { it.code == code } ?: EN
+
+        fun shortOf(code: String?): String = from(code).short
     }
 }
 
@@ -83,7 +123,12 @@ data class Settings(
     val autoRefreshWifiOnly: Boolean = true,
     // 翻译费用预估（0.4.0 P0 收尾）：可选，每 1k token 单价（美元），0 = 没填。
     // 填了就按它算整集预估（输入+输出同价）；没填就查内置单价表，查不到只显示 token 数。
-    val customPricePer1kTokens: Float = 0f
+    val customPricePer1kTokens: Float = 0f,
+    /** 首页列表角标：未听数 / 已听数 / 都显示（0.4.1） */
+    val listBadge: ListBadgeMode = ListBadgeMode.UNPLAYED,
+    /** 播放页音轨切换的两种语言（多音轨 YouTube 集），默认 英文 ⇄ 中文 */
+    val audioLangA: String = "en",
+    val audioLangB: String = "zh"
 ) {
     val ready: Boolean get() = apiKey.isNotBlank() && baseUrl.isNotBlank() && model.isNotBlank()
 
@@ -127,9 +172,11 @@ class SettingsStore(context: Context) {
         playbackSpeed = prefs.getFloat(KEY_SPEED, 1f).coerceIn(0.5f, 3f),
         autoRefreshEnabled = prefs.getBoolean(KEY_AUTO_REFRESH, true),
         autoRefreshWifiOnly = prefs.getBoolean(KEY_AUTO_REFRESH_WIFI, true),
-        customPricePer1kTokens = prefs.getFloat(KEY_CUSTOM_PRICE, 0f).coerceAtLeast(0f)
+        customPricePer1kTokens = prefs.getFloat(KEY_CUSTOM_PRICE, 0f).coerceAtLeast(0f),
+        listBadge = ListBadgeMode.from(prefs.getString(KEY_BADGE, null)),
+        audioLangA = prefs.getString(KEY_AUDIO_LANG_A, null) ?: "en",
+        audioLangB = prefs.getString(KEY_AUDIO_LANG_B, null) ?: "zh"
     )
-
     fun save(settings: Settings) {
         prefs.edit()
             .putString(KEY_BASE, settings.baseUrl)
@@ -155,6 +202,9 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_AUTO_REFRESH, settings.autoRefreshEnabled)
             .putBoolean(KEY_AUTO_REFRESH_WIFI, settings.autoRefreshWifiOnly)
             .putFloat(KEY_CUSTOM_PRICE, settings.customPricePer1kTokens)
+            .putString(KEY_BADGE, settings.listBadge.name)
+            .putString(KEY_AUDIO_LANG_A, settings.audioLangA)
+            .putString(KEY_AUDIO_LANG_B, settings.audioLangB)
             .apply()
     }
 
@@ -182,5 +232,8 @@ class SettingsStore(context: Context) {
         private const val KEY_AUTO_REFRESH = "autoRefreshEnabled"
         private const val KEY_AUTO_REFRESH_WIFI = "autoRefreshWifiOnly"
         private const val KEY_CUSTOM_PRICE = "customPricePer1kTokens"
+        private const val KEY_BADGE = "listBadge"
+        private const val KEY_AUDIO_LANG_A = "audioLangA"
+        private const val KEY_AUDIO_LANG_B = "audioLangB"
     }
 }

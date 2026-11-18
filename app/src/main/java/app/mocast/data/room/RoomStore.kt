@@ -292,6 +292,98 @@ class RoomStore : AsrTranscriptStore {
     }
 
     // ------------------------------------------------------------------
+    // 生词本（DB v3）
+    // ------------------------------------------------------------------
+
+    /**
+     * 收一个词：词条不存在就建，然后按「同词同释义」去重插一条释义。
+     * 返回 true 表示新加了一条释义，false 表示这个词/这个释义已经有了。
+     */
+    fun collectWord(
+        word: String,
+        pos: String,
+        ipa: String,
+        gloss: String,
+        level: String,
+        example: String,
+        showId: String,
+        episodeId: String,
+        startMs: Long
+    ): Boolean = io {
+        val key = word.trim().lowercase()
+        if (key.isBlank() || gloss.isBlank()) return@io false
+        db.withTransaction {
+            val existed = db.wordDao().getWord(key) != null
+            if (!existed) {
+                db.wordDao().insertWord(
+                    WordEntity(word = key, level = level, addedAt = System.currentTimeMillis())
+                )
+            }
+            val same = db.wordDao().countSense(key, gloss) > 0
+            if (same) {
+                false
+            } else {
+                db.wordDao().insertSense(
+                    WordSenseEntity(
+                        word = key,
+                        pos = pos,
+                        gloss = gloss,
+                        ipa = ipa,
+                        example = example,
+                        showId = showId,
+                        episodeId = episodeId,
+                        startMs = startMs,
+                        createdAt = System.currentTimeMillis()
+                    )
+                )
+                true
+            }
+        }
+    }
+
+    /** 某一集里已经收过的词（播放页词片显示"已收"用）。 */
+    fun collectedWordsInEpisode(episodeId: String): Set<String> = io {
+        db.wordDao().getSensesByEpisode(episodeId).map { it.word }.toSet()
+    }
+
+    fun listWords(): List<WordEntity> = io { db.wordDao().getAllWords() }
+
+    fun sensesOf(word: String): List<WordSenseEntity> = io {
+        db.wordDao().getSenses(word.trim().lowercase())
+    }
+
+    fun setWordMastered(word: String, mastered: Boolean) = io {
+        db.wordDao().setMastered(word.trim().lowercase(), mastered)
+    }
+
+    fun bumpWordReview(word: String) = io {
+        db.wordDao().incrementReview(word.trim().lowercase())
+    }
+
+    /** 删词条（连它的全部释义一起删）。 */
+    fun deleteWord(word: String) = io {
+        val key = word.trim().lowercase()
+        db.withTransaction {
+            db.wordDao().deleteSensesOfWord(key)
+            db.wordDao().deleteWord(key)
+        }
+    }
+
+    fun removeSense(id: Long) = io { db.wordDao().deleteSense(id) }
+
+    /**
+     * 取消收藏某一集里的某个词：只删这集的释义；
+     * 这个词在本集之外没有释义了，才把词条一起删掉。
+     */
+    fun uncollectWordInEpisode(word: String, episodeId: String) = io {
+        val key = word.trim().lowercase()
+        db.withTransaction {
+            db.wordDao().deleteSensesOfWordInEpisode(key, episodeId)
+            if (db.wordDao().countSenses(key) == 0) db.wordDao().deleteWord(key)
+        }
+    }
+
+    // ------------------------------------------------------------------
     // 内部
     // ------------------------------------------------------------------
 

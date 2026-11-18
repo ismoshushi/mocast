@@ -48,8 +48,10 @@ fun AppRoot(vm: AppViewModel) {
         BackHandler(enabled = state.screen != Screen.Home) { vm.back() }
 
         Box(Modifier.fillMaxSize()) {
-            // 迷你播放条（0.4.0 补项）：有当前单集且不在播放页时常驻底部。
-            val showMiniPlayer = state.currentEpisode != null && state.screen != Screen.Player
+            // 迷你播放条：只在首页和节目详情页常驻。设置/关于等页面要整屏看内容，
+            // 播放条浮在上面对它们没意义，还压字，直接不显示。
+            val showMiniPlayer = state.currentEpisode != null &&
+                (state.screen == Screen.Home || state.screen is Screen.ShowDetail)
             when (val screen = state.screen) {
                 Screen.Home -> HomeScreen(
                     state = state,
@@ -68,13 +70,21 @@ fun AppRoot(vm: AppViewModel) {
                     onOpenAbout = vm::openAbout,
                     onThemeMode = vm::setThemeMode,
                     onSaveSettings = vm::saveSettings,
+                    onSpeed = vm::setSpeed,
+                    onDownloadModel = vm::downloadAsrModel,
+                    onDeleteModel = vm::deleteAsrModel,
+                    onCancelModelDownload = vm::cancelAsrModelDownload,
                     onImportOpml = { importOpmlLauncher.launch("*/*") },
                     onExportOpml = vm::prepareOpmlExport,
                     opmlImportSummary = state.opmlImportSummary,
                     onDismissOpmlSummary = vm::dismissOpmlSummary,
-                    onSubscribeRecommended = vm::subscribeRecommended,
-                    subscribingFeedUrl = state.subscribingFeedUrl,
-                    subscribedFeedUrls = state.shows.map { it.feedUrl.trim() }.toSet()
+                    onOpenRecommended = vm::openRecommended
+                )
+
+                Screen.Recommended -> RecommendedScreen(
+                    state = state,
+                    onBack = vm::back,
+                    onSubscribe = vm::subscribeRecommended
                 )
 
                 Screen.Translation -> TranslationScreen(
@@ -128,6 +138,7 @@ fun AppRoot(vm: AppViewModel) {
                     onTranslate = vm::translateCurrent,
                     onMode = vm::setDisplayMode,
                     onToggleVideoMode = vm::toggleVideoMode,
+                    onSelectAudioLanguage = vm::setYoutubeAudioLanguage,
                     onDownload = { state.currentEpisode?.let { vm.downloadEpisode(it) } },
                     onCancelDownload = { state.currentEpisode?.let { vm.cancelDownload(it.id) } },
                     onDeleteDownload = { state.currentEpisode?.let { vm.deleteDownload(it.id) } },
@@ -135,38 +146,43 @@ fun AppRoot(vm: AppViewModel) {
                     onCancelAsr = vm::cancelAsr,
                     onSleepMinutes = vm::setSleepMinutes,
                     onSleepEndOfEpisode = vm::setSleepEndOfEpisode,
-                    onCancelSleep = vm::cancelSleep
+                    onCancelSleep = vm::cancelSleep,
+                    onToggleWord = { word, pos, ipa, gloss, cueIndex ->
+                        vm.toggleCollectedWord(word, pos, ipa, gloss, cueIndex)
+                    },
+                    onCollectAllWords = vm::collectAllWordsInEpisode,
+                    onDismissWordHint = vm::clearWordCollectHint
                 )
             }
 
-            // 底部常驻区：迷你播放条在上，出错提示在下（两者同时出现时不重叠）。
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-            ) {
-                if (showMiniPlayer) {
-                    MiniPlayer(
-                        state = state,
-                        onOpenPlayer = vm::openPlayer,
-                        onTogglePlay = vm::togglePlay,
-                        onOpenQueue = vm::openQueueDialog
-                    )
-                }
-                if (state.queueDialog) {
-                    QueueDialog(
-                        state = state,
-                        onDismiss = vm::dismissQueueDialog,
-                        onPlay = { episode ->
-                            vm.dismissQueueDialog()
-                            vm.openEpisode(episode)
-                        },
-                        onMoveUp = { episode -> vm.moveQueue(episode.id, up = true) },
-                        onMoveDown = { episode -> vm.moveQueue(episode.id, up = false) },
-                        onRemove = { episode -> vm.removeFromQueue(episode.id) },
-                        onClear = vm::clearQueue
-                    )
-                }
+            // 底部常驻区：播放条是一张浮起的圆角卡片，抬到系统导航条之上，
+            // 不再贴着屏幕最下沿被手势条切掉一截。
+            if (showMiniPlayer) {
+                MiniPlayer(
+                    state = state,
+                    onOpenPlayer = vm::openPlayer,
+                    onTogglePlay = vm::togglePlay,
+                    onOpenQueue = vm::openQueueDialog,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp)
+                )
+            }
+
+            if (state.queueDialog) {
+                QueueDialog(
+                    state = state,
+                    onDismiss = vm::dismissQueueDialog,
+                    onPlay = { episode ->
+                        vm.dismissQueueDialog()
+                        vm.openEpisode(episode)
+                    },
+                    onMoveUp = { episode -> vm.moveQueue(episode.id, up = true) },
+                    onMoveDown = { episode -> vm.moveQueue(episode.id, up = false) },
+                    onRemove = { episode -> vm.removeFromQueue(episode.id) },
+                    onClear = vm::clearQueue
+                )
             }
 
             state.error?.let { message ->
@@ -182,8 +198,8 @@ fun AppRoot(vm: AppViewModel) {
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
-                        // 迷你播放条在时把提示往上顶 72dp，避免盖住播放条。
-                        .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = if (showMiniPlayer) 84.dp else 20.dp)
+                        // 播放条在时把提示往上顶：卡片 64dp + 上下边距。
+                        .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = if (showMiniPlayer) 92.dp else 20.dp)
                         .fillMaxWidth()
                 ) {
                     Row(

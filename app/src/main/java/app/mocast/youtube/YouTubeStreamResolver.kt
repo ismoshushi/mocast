@@ -10,12 +10,13 @@ import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.exceptions.AgeRestrictedContentException
 import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException
 import org.schabi.newpipe.extractor.exceptions.ExtractionException
-import org.schabi.newpipe.extractor.exceptions.GeoRestrictedException
+import org.schabi.newpipe.extractor.exceptions.GeographicRestrictionException
 import org.schabi.newpipe.extractor.exceptions.ParsingException
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.localization.ContentCountry
 import org.schabi.newpipe.extractor.localization.Localization
 import org.schabi.newpipe.extractor.stream.AudioStream
+import org.schabi.newpipe.extractor.stream.AudioTrackType
 import org.schabi.newpipe.extractor.stream.StreamType
 import org.schabi.newpipe.extractor.stream.VideoStream
 import java.io.IOException
@@ -44,7 +45,19 @@ data class YouTubeStreams(
     /** [videoUrl] 是否为 DASH 清单：ExoPlayer 需 setMimeType(APPLICATION_MPD) */
     val videoIsDash: Boolean = false,
     /** [videoUrl] 是否为 HLS 清单：ExoPlayer 需 setMimeType(APPLICATION_M3U8) */
-    val videoIsHls: Boolean = false
+    val videoIsHls: Boolean = false,
+    /**
+     * 原始音轨的语言（如 "en"）。YouTube 现在会给很多视频挂机器配音音轨
+     * （DUBBED），DASH/HLS 清单默认可能选中配音轨，播放前用这个语言把音轨
+     * 锁回原声。空串表示没解析出来，不做限制。
+     */
+    val audioLanguage: String = ""
+    ,
+    /**
+     * 音频模式可切的语言流：语言码 -> 音频地址（含原声 ORIGINAL 与各语言 DUBBED）。
+     * 音频模式只播一条流，没有多轨清单，所以靠换地址来切语言。
+     */
+    val audioAlternatives: Map<String, String> = emptyMap()
 )
 
 /**
@@ -142,11 +155,21 @@ object YouTubeStreamResolver {
         val streamType = runCatching { extractor.streamType }.getOrNull()
 
         val combined = extractor.videoStreams.orEmpty()
-            .filter { it.isUrl && !it.videoOnly }
+            .filter { it.isUrl && !it.isVideoOnly }
         val videoOnly = extractor.videoOnlyStreams.orEmpty()
             .filter { it.isUrl }
         val audio = extractor.audioStreams.orEmpty()
             .filter { it.isUrl }
+        // YouTube 的机器配音音轨（DUBBED）会混进 getAudioStreams()，码率有时比原声还高。
+        // 优先原声（ORIGINAL），其次非配音，最后才全部兜底，避免播出来是中文配音。
+        val originalAudio = audio.filter {
+            runCatching { it.audioTrackType }.getOrNull() == AudioTrackType.ORIGINAL
+        }
+        val usableAudio = originalAudio.ifEmpty {
+            audio.filterNot {
+                runCatching { it.audioTrackType }.getOrNull() == AudioTrackType.DUBBED
+            }
+        }.ifEmpty { audio }
         val dashMpdUrl = runCatching { extractor.dashMpdUrl }.getOrDefault("").orEmpty()
         val hlsUrl = runCatching { extractor.hlsUrl }.getOrDefault("").orEmpty()
 
@@ -176,7 +199,18 @@ object YouTubeStreamResolver {
             else -> Triple("", false, false)
         }
 
-        val bestAudio = audio.maxByOrNull { it.effectiveBitrate() }
+        val bestAudio = usableAudio.maxByOrNull { it.effectiveBitrate() }
+        val audioLanguage = runCatching { bestAudio?.audioLocale?.language.orEmpty() }.getOrDefault("")
+        // 每条音频轨一条地址，按语言码索引（同语言多条取码率最高那条），供播放页音频模式切语言。
+        val audioAlternatives = audio
+            .mapNotNull { s ->
+                val lang = runCatching { s.audioLocale?.language }.getOrNull()?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+                lang.lowercase() to s
+            }
+            .groupBy({ it.first }, { it.second })
+            .mapValues { (_, list) -> list.maxByOrNull { it.effectiveBitrate() }?.content.orEmpty() }
+            .filterValues { it.isNotBlank() }
         val audioUrl = bestAudio?.content
             // 合并流/DASH/HLS 本来就带音频，音频模式可直接播同一条地址
             ?: combinedChoice?.content
@@ -185,13 +219,23 @@ object YouTubeStreamResolver {
         if (videoUrl.isBlank() && audioUrl.isBlank()) {
             throw YouTubeResolveException("这个视频没有可用的音视频流，可能已被删除或限制播放")
         }
+        android.util.Log.i(
+            "MoCastYT",
+            "videoBar=${videoIsDash}${videoIsHls} audioTracks=" + audio.joinToString(" | ") { s ->
+                val type = runCatching { s.audioTrackType?.name }.getOrNull() ?: "?"
+                val lang = runCatching { s.audioLocale?.language }.getOrNull() ?: "?"
+                "$type/$lang/${s.effectiveBitrate()}"
+            } + " chosen=$audioLanguage"
+        )
         return YouTubeStreams(
             videoUrl = videoUrl,
             audioUrl = audioUrl,
             isVideo = videoUrl.isNotBlank(),
             title = title,
             videoIsDash = videoIsDash,
-            videoIsHls = videoIsHls
+            videoIsHls = videoIsHls,
+            audioLanguage = audioLanguage,
+            audioAlternatives = audioAlternatives
         )
     }
 
@@ -212,7 +256,7 @@ object YouTubeStreamResolver {
         if (e is YouTubeResolveException) return e
         val msg = e.message.orEmpty()
         return when (e) {
-            is GeoRestrictedException ->
+            is GeographicRestrictionException ->
                 YouTubeResolveException("这个视频在你所在的地区无法播放（地区版权限制）", e)
             is ContentNotAvailableException ->
                 YouTubeResolveException("这个视频不存在、已被删除或设为私享", e)

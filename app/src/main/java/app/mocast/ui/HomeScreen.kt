@@ -12,13 +12,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Podcasts
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -40,8 +46,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
+import app.mocast.data.ListBadgeMode
 import app.mocast.data.Show
 import coil.compose.AsyncImage
 
@@ -57,6 +66,13 @@ fun HomeScreen(
     /** 迷你播放条出现时列表底部留空，避免被播放条盖住。 */
     showMiniPlayer: Boolean = false
 ) {
+    // 标题下的小字改成真实信息：订阅数 + 未听总数，不再是版本号和口号。
+    val totalUnplayed = state.unplayedCounts.values.sum()
+    val subtitle = when {
+        state.shows.isEmpty() -> "还没有订阅"
+        totalUnplayed > 0 -> "${state.shows.size} 个节目 · $totalUnplayed 集未听"
+        else -> "${state.shows.size} 个节目 · 都听完了"
+    }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -65,7 +81,7 @@ fun HomeScreen(
                     Column {
                         Text("MoCast", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "${app.mocast.BuildConfig.VERSION_NAME} · 双语字幕 · 订阅 · 播放",
+                            subtitle,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -92,18 +108,18 @@ fun HomeScreen(
                     .padding(padding),
                 verticalArrangement = Arrangement.Center
             ) {
-                EmptyHome()
+                EmptyHome(onAdd = onAddClick)
             }
         } else {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
-                contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, if (showMiniPlayer) 88.dp else 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                contentPadding = PaddingValues(12.dp, 8.dp, 12.dp, if (showMiniPlayer) 88.dp else 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(state.shows, key = { it.id }) { show ->
-                    ShowCard(show, state.unplayedCounts[show.id] ?: 0) { onOpenShow(show.id) }
+                    ShowCard(show, state.unplayedCounts[show.id] ?: 0, state.settings.listBadge) { onOpenShow(show.id) }
                 }
             }
         }
@@ -119,74 +135,141 @@ fun HomeScreen(
 }
 
 @Composable
-private fun EmptyHome() {
+private fun EmptyHome(onAdd: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 24.dp, horizontal = 16.dp)
+            .padding(vertical = 40.dp, horizontal = 32.dp)
     ) {
-        Text("还没有订阅", style = MaterialTheme.typography.titleMedium)
+        // 图标底座：一圈淡色圆底 + 播客图标，空页面也有视觉重心。
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(76.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+        ) {
+            Icon(
+                Icons.Outlined.Podcasts,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(38.dp)
+            )
+        }
+        Spacer(Modifier.height(18.dp))
+        Text("还没有订阅", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
         Text(
-            "支持 RSS 直链、Apple Podcasts、YouTube 频道/播放列表、小宇宙。\n点右上角 ＋ 粘贴链接即可。",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            "贴一个 RSS 直链、Apple Podcasts、YouTube 频道/播放列表或小宇宙链接，就能开始听。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            lineHeight = 20.sp,
+            modifier = Modifier.widthIn(max = 310.dp)
         )
+        Spacer(Modifier.height(24.dp))
+        Button(
+            onClick = onAdd,
+            shape = RoundedCornerShape(24.dp),
+            contentPadding = PaddingValues(horizontal = 22.dp, vertical = 10.dp)
+        ) {
+            Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("添加订阅")
+        }
     }
 }
 
 @Composable
-private fun ShowCard(show: Show, unplayedCount: Int, onClick: () -> Unit) {
+private fun ShowCard(show: Show, unplayedCount: Int, badgeMode: ListBadgeMode, onClick: () -> Unit) {
+    // 统一 84dp 行高：标题、作者各一行，角标固定右边居中，不再因为标题长短高低不齐。
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-        modifier = Modifier.fillMaxWidth()
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(84.dp)
     ) {
-        Row(modifier = Modifier.padding(12.dp)) {
-            Cover(show.artwork, 66.dp)
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Cover(show.artwork, 60.dp)
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     show.title,
                     style = MaterialTheme.typography.titleSmall,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
                     show.author.ifBlank { show.source },
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "${show.episodeCount} 集 · ${formatDate(show.lastUpdated)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    // 0.4.0 补项：未听数角标（0 不显示，不占位）。
-                    if (unplayedCount > 0) {
-                        Spacer(Modifier.width(8.dp))
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.primary
-                        ) {
-                            Text(
-                                "${unplayedCount} 未听",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
+                Text(
+                    buildString {
+                        append("${show.episodeCount} 集")
+                        val date = formatDate(show.lastUpdated)
+                        if (date.isNotBlank()) {
+                            append(" · ")
+                            append(if (date.length >= 10) date.substring(5) else date)
                         }
-                    }
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    maxLines = 1
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            // 角标内容可在设置里切：未听数 / 已听数 / 都显示。
+            val playedCount = (show.episodeCount - unplayedCount).coerceAtLeast(0)
+            when (badgeMode) {
+                ListBadgeMode.UNPLAYED -> if (unplayedCount > 0) {
+                    CountBadge("$unplayedCount 未听", true)
+                } else {
+                    Text(
+                        "已听完",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+                ListBadgeMode.PLAYED -> CountBadge("$playedCount 已听", false)
+                ListBadgeMode.BOTH -> Column(horizontalAlignment = Alignment.End) {
+                    CountBadge("$unplayedCount 未听", true)
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        "$playedCount 已听",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                    )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CountBadge(text: String, filled: Boolean) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = if (filled) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (filled) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+        )
     }
 }
 

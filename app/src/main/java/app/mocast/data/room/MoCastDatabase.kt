@@ -34,9 +34,11 @@ import kotlinx.coroutines.runBlocking
         ProgressEntity::class,
         DownloadEntity::class,
         AsrTranscriptEntity::class,
-        QueueItemEntity::class
+        QueueItemEntity::class,
+        WordEntity::class,
+        WordSenseEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class MoCastDatabase : RoomDatabase() {
@@ -47,6 +49,7 @@ abstract class MoCastDatabase : RoomDatabase() {
     abstract fun downloadDao(): DownloadDao
     abstract fun asrTranscriptDao(): AsrTranscriptDao
     abstract fun queueDao(): QueueDao
+    abstract fun wordDao(): WordDao
 
     companion object {
         const val DATABASE_NAME = "mocast.db"
@@ -69,7 +72,7 @@ abstract class MoCastDatabase : RoomDatabase() {
                 context,
                 MoCastDatabase::class.java,
                 DATABASE_NAME
-            ).addMigrations(MIGRATION_1_2).build()
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
             if (!migrationAttempted) {
                 migrationAttempted = true
                 // 同步等迁移完成再返回：保证首个 RoomStore 读到的是迁移后数据。
@@ -109,5 +112,30 @@ val MIGRATION_1_2: Migration = object : Migration(1, 2) {
                 "PRIMARY KEY(`episodeId`))"
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_queue_items_position` ON `queue_items` (`position`)")
+    }
+}
+
+/**
+ * v2 → v3（0.5 生词本）：只建两张新表，不动旧表、不删数据。
+ * - words：一词一条（主键 word）。
+ * - word_senses：一条释义 + 一句例句；word / episodeId 建索引。
+ */
+val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `words` (" +
+                "`word` TEXT NOT NULL, `level` TEXT NOT NULL, `addedAt` INTEGER NOT NULL, " +
+                "`reviewCount` INTEGER NOT NULL, `mastered` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`word`))"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `word_senses` (" +
+                "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `word` TEXT NOT NULL, " +
+                "`pos` TEXT NOT NULL, `gloss` TEXT NOT NULL, `ipa` TEXT NOT NULL, " +
+                "`example` TEXT NOT NULL, `showId` TEXT NOT NULL, `episodeId` TEXT NOT NULL, " +
+                "`startMs` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL)"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_word_senses_word` ON `word_senses` (`word`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_word_senses_episodeId` ON `word_senses` (`episodeId`)")
     }
 }

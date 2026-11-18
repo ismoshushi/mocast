@@ -201,3 +201,45 @@ data class QueueItemEntity(
     val position: Int,
     val addedAt: Long
 )
+
+
+// ---------------------------------------------------------------------------
+// 生词本（DB v3 新增表）
+// ---------------------------------------------------------------------------
+
+/**
+ * 生词本词条：一个单词一条（主键是小写原词）。
+ * 词条本身只放"整体状态"，具体释义/例句放 word_senses，一词可有多条。
+ */
+@Entity(tableName = "words")
+data class WordEntity(
+    @PrimaryKey val word: String,
+    /** 加入时所在的词汇层级（KeywordLevel.name），只作记录用 */
+    val level: String = "",
+    val addedAt: Long,
+    /** 复习次数：每标一次"认识"或"不认识"都 +1 */
+    val reviewCount: Int = 0,
+    val mastered: Boolean = false
+)
+
+/** 一条释义 + 一句例句（同一词可多条；同一词同一释义不重复插）。 */
+@Entity(
+    tableName = "word_senses",
+    indices = [Index("word"), Index("episodeId")]
+)
+data class WordSenseEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val word: String,
+    val pos: String,
+    /** 中文释义 */
+    val gloss: String,
+    /** 音标（模型给，可能不准；可空串） */
+    val ipa: String,
+    /** 原字幕句 */
+    val example: String,
+    val showId: String,
+    val episodeId: String,
+    /** 例句在音频里的位置（毫秒），点例句可跳回 */
+    val startMs: Long,
+    val createdAt: Long
+)

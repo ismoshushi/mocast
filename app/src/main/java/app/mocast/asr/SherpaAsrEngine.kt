@@ -18,19 +18,17 @@ import kotlin.coroutines.coroutineContext
 /**
  * Sherpa-ONNX + Whisper 的本机识别实现。
  *
- * 依赖的 Sherpa Java API（2026-11-18 已按官方 java-api-examples 核实，均真实存在，
- * 不是编的；见 README.md 的“API 核实清单”）：
- * - OfflineWhisperModelConfig.builder().setEncoder().setDecoder().setLanguage().setTask()
- * - OfflineModelConfig.builder().setWhisper().setTokens().setNumThreads().setDebug()
- * - OfflineRecognizerConfig.builder().setOfflineModelConfig().setDecodingMethod("greedy_search")
- * - OfflineRecognizer(config) / createStream() / decode(stream) / getResult(stream).text
- *   / release()；OfflineStream.acceptWaveform(samples, sampleRate) / release()
- * - SileroVadModelConfig.builder().setModel().setThreshold().setMinSilenceDuration()
- *   .setMinSpeechDuration().setWindowSize()
- * - VadModelConfig.builder().setSileroVadModelConfig().setSampleRate().setNumThreads()
- *   .setDebug().setProvider("cpu")
- * - Vad.acceptWaveform(samples) / isSpeechDetected() / empty() / front() / pop() / release()
- * - SpeechSegment.getStart()（起始采样点）/ getSamples()
+ * 依赖的 Sherpa API（1.13.8 AAR 实测，javap 核实过签名；Kotlin data class 构造，无 builder）：
+ * - OfflineWhisperModelConfig(encoder, decoder, language, task)
+ * - OfflineModelConfig(whisper, tokens, numThreads, debug)
+ * - OfflineRecognizerConfig(modelConfig, decodingMethod)
+ * - OfflineRecognizer(assetManager = null, config) / createStream() / decode(stream)
+ *   / getResult(stream).text / release()；OfflineStream.acceptWaveform(samples, sampleRate) / release()
+ * - SileroVadModelConfig(model, threshold, minSilenceDuration, minSpeechDuration, windowSize)
+ * - VadModelConfig(sileroVadModelConfig, sampleRate, numThreads, debug, provider)
+ * - Vad(assetManager = null, config)；acceptWaveform(samples) / isSpeechDetected()
+ *   / empty() / front() / pop() / flush() / release()
+ * - SpeechSegment.start（起始采样点，Int）/ SpeechSegment.samples
  *
  * 流程：解码（10 秒一块）→ VAD 喂 512 采样窗 → 攒成 10~30 秒段 → Whisper 逐段识别
  * → 幻觉过滤 → 返回 Cue 列表。Cue 的时间戳取 VAD 段边界，不依赖 Whisper 的词级时间戳
@@ -124,7 +122,7 @@ class SherpaAsrEngine(
                 }
             }
             // 收尾：喂 1 秒静音逼出 VAD 残留，再把攒着的最后一段强制识别。
-            feedVad(FloatArray(SAMPLE_RATE * TRAILING_SILENCE_MS / 1000))
+            feedVad(FloatArray((SAMPLE_RATE * TRAILING_SILENCE_MS / 1000).toInt()))
             drainVadInto(pending)
             flushPending(force = true)
             cues.sortedBy { it.startMs }
@@ -145,41 +143,41 @@ class SherpaAsrEngine(
     // ---- Sherpa 对象创建（builder 写法按官方 Java 示例） ----
 
     private fun createVad(): Vad {
-        val silero = SileroVadModelConfig.builder()
-            .setModel(modelFiles.vad.absolutePath)
-            .setThreshold(0.5f)
-            .setMinSilenceDuration(0.25f)
-            .setMinSpeechDuration(0.5f)
-            .setWindowSize(VAD_WINDOW)
-            .build()
-        val config = VadModelConfig.builder()
-            .setSileroVadModelConfig(silero)
-            .setSampleRate(SAMPLE_RATE)
-            .setNumThreads(1)
-            .setDebug(false)
-            .setProvider("cpu")
-            .build()
-        return Vad(config)
+        val silero = SileroVadModelConfig(
+            model = modelFiles.vad.absolutePath,
+            threshold = 0.5f,
+            minSilenceDuration = 0.25f,
+            minSpeechDuration = 0.5f,
+            windowSize = VAD_WINDOW
+        )
+        val config = VadModelConfig(
+            sileroVadModelConfig = silero,
+            sampleRate = SAMPLE_RATE,
+            numThreads = 1,
+            debug = false,
+            provider = "cpu"
+        )
+        return Vad(assetManager = null, config = config)
     }
 
     private fun createRecognizer(language: String): OfflineRecognizer {
-        val whisper = OfflineWhisperModelConfig.builder()
-            .setEncoder(modelFiles.encoder.absolutePath)
-            .setDecoder(modelFiles.decoder.absolutePath)
-            .setLanguage(language)
-            .setTask("transcribe")
-            .build()
-        val modelConfig = OfflineModelConfig.builder()
-            .setWhisper(whisper)
-            .setTokens(modelFiles.tokens.absolutePath)
-            .setNumThreads(numThreads)
-            .setDebug(false)
-            .build()
-        val config = OfflineRecognizerConfig.builder()
-            .setOfflineModelConfig(modelConfig)
-            .setDecodingMethod("greedy_search")
-            .build()
-        return OfflineRecognizer(config)
+        val whisper = OfflineWhisperModelConfig(
+            encoder = modelFiles.encoder.absolutePath,
+            decoder = modelFiles.decoder.absolutePath,
+            language = language,
+            task = "transcribe"
+        )
+        val modelConfig = OfflineModelConfig(
+            whisper = whisper,
+            tokens = modelFiles.tokens.absolutePath,
+            numThreads = numThreads,
+            debug = false
+        )
+        val config = OfflineRecognizerConfig(
+            modelConfig = modelConfig,
+            decodingMethod = "greedy_search"
+        )
+        return OfflineRecognizer(assetManager = null, config = config)
     }
 
     /** 取当前语言的 recognizer，没有就建一个；语言锁定后重建一次（旧的先 release）。 */
@@ -291,8 +289,8 @@ class SherpaAsrEngine(
         private var gapBreak = false
 
         fun add(segment: SpeechSegment) {
-            val segStart = segment.getStart().toLong()
-            val segEnd = segStart + segment.getSamples().size
+            val segStart = segment.start.toLong()
+            val segEnd = segStart + segment.samples.size
             if (parts.isNotEmpty()) {
                 val gapMs = (segStart - endSample) * 1000 / SAMPLE_RATE
                 val bufferedMs = (endSample - startSample) * 1000 / SAMPLE_RATE
@@ -311,11 +309,11 @@ class SherpaAsrEngine(
             val durationMs = (endSample - startSample) * 1000 / SAMPLE_RATE
             if (!force && !gapBreak && durationMs < MAX_SEGMENT_MS) return null
             // 出段条件（三者满足其一）：停顿断句（gapBreak）、攒到 30 秒硬上限、强制收尾。
-            val total = parts.sumOf { it.getSamples().size }
+            val total = parts.sumOf { it.samples.size }
             val merged = FloatArray(total)
             var offset = 0
             for (part in parts) {
-                val s = part.getSamples()
+                val s = part.samples
                 s.copyInto(merged, offset)
                 offset += s.size
             }

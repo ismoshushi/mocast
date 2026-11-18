@@ -232,3 +232,62 @@ interface AsrTranscriptDao {
     @Query("SELECT COUNT(*) FROM asr_transcripts")
     suspend fun count(): Int
 }
+
+
+// ---------------------------------------------------------------------------
+// 生词本（DB v3）
+// ---------------------------------------------------------------------------
+
+@Dao
+interface WordDao {
+
+    @Query("SELECT * FROM words ORDER BY addedAt DESC")
+    suspend fun getAllWords(): List<WordEntity>
+
+    @Query("SELECT * FROM words WHERE word = :word")
+    suspend fun getWord(word: String): WordEntity?
+
+    @Query("SELECT * FROM words WHERE word LIKE '%' || :query || '%' ORDER BY addedAt DESC")
+    suspend fun searchWords(query: String): List<WordEntity>
+
+    @Query("SELECT * FROM word_senses WHERE word = :word ORDER BY createdAt ASC")
+    suspend fun getSenses(word: String): List<WordSenseEntity>
+
+    @Query("SELECT * FROM word_senses WHERE episodeId = :episodeId")
+    suspend fun getSensesByEpisode(episodeId: String): List<WordSenseEntity>
+
+    /** 同词同释义是否已存在（去重用） */
+    @Query("SELECT COUNT(*) FROM word_senses WHERE word = :word AND gloss = :gloss")
+    suspend fun countSense(word: String, gloss: String): Int
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertWord(word: WordEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertSense(sense: WordSenseEntity): Long
+
+    @Query("UPDATE words SET mastered = :mastered WHERE word = :word")
+    suspend fun setMastered(word: String, mastered: Boolean)
+
+    @Query("UPDATE words SET reviewCount = reviewCount + 1 WHERE word = :word")
+    suspend fun incrementReview(word: String)
+
+    @Query("DELETE FROM words WHERE word = :word")
+    suspend fun deleteWord(word: String)
+
+    @Query("DELETE FROM word_senses WHERE word = :word")
+    suspend fun deleteSensesOfWord(word: String)
+
+    /** 取消收藏：只删这一集的释义，别的集里同词的释义保留。 */
+    @Query("DELETE FROM word_senses WHERE word = :word AND episodeId = :episodeId")
+    suspend fun deleteSensesOfWordInEpisode(word: String, episodeId: String)
+
+    @Query("SELECT COUNT(*) FROM word_senses WHERE word = :word")
+    suspend fun countSenses(word: String): Int
+
+    @Query("DELETE FROM word_senses WHERE id = :id")
+    suspend fun deleteSense(id: Long)
+
+    @Query("SELECT COUNT(*) FROM words")
+    suspend fun count(): Int
+}

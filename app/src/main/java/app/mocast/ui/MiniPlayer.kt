@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -57,16 +58,20 @@ fun MiniPlayer(
     } else 0f
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
-        tonalElevation = 6.dp,
+        shape = RoundedCornerShape(18.dp),
+        tonalElevation = 3.dp,
+        shadowElevation = 8.dp,
         modifier = modifier
             .fillMaxWidth()
+            .height(64.dp)
             .clickable(onClick = onOpenPlayer)
     ) {
         Column {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 4.dp),
+                    .weight(1f)
+                    .padding(start = 10.dp, end = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Cover(episode.artwork.ifBlank { state.currentShow?.artwork.orEmpty() }, 40.dp)
@@ -87,18 +92,27 @@ fun MiniPlayer(
                     )
                 }
                 IconButton(onClick = onOpenQueue) {
-                    Icon(Icons.Default.QueueMusic, contentDescription = "播放队列")
+                    Icon(
+                        Icons.Default.QueueMusic,
+                        contentDescription = "播放队列",
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
                 IconButton(onClick = onTogglePlay) {
                     Icon(
                         imageVector = if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (state.isPlaying) "暂停" else "播放"
+                        contentDescription = if (state.isPlaying) "暂停" else "播放",
+                        modifier = Modifier.size(26.dp)
                     )
                 }
             }
             LinearProgressIndicator(
                 progress = progress,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(2.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.outlineVariant
             )
         }
     }

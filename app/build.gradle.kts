@@ -22,8 +22,8 @@ android {
         applicationId = "app.mocast"
         minSdk = 26
         targetSdk = 35
-        versionCode = 400
-        versionName = "0.4.0"
+        versionCode = 406
+        versionName = "0.4.6"
         ndk {
             // 只留 arm64-v8a：Sherpa-ONNX AAR 的 .so 体积最大，x86_64/armv7a 会让 APK 胖几十 MB。
             // 影响：x86_64 模拟器装不上（启动即崩，缺 .so）；开发调试用 arm64 模拟器镜像或真机。
@@ -83,6 +83,10 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
 
     implementation("androidx.media3:media3-exoplayer:1.4.1")
+    // YouTube 视频流走 DASH/HLS：media3 的 dash/hls 是独立 artifact，
+    // 不加会在 setMediaItems 时 ClassNotFoundException（HlsMediaSource$Factory）。
+    implementation("androidx.media3:media3-exoplayer-dash:1.4.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
     implementation("androidx.media3:media3-session:1.4.1")
     implementation("androidx.media3:media3-common:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")

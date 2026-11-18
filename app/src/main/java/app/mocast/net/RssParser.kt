@@ -55,14 +55,19 @@ object RssParser {
         }
 
         if (title.isEmpty()) title = "未命名节目"
-        if (artwork.isEmpty()) artwork = items.firstOrNull()?.artwork.orEmpty()
+        // YouTube 官方频道 feed 会把 Shorts 混进来（/shorts/ 链接，几十秒一条），
+        // 一个频道 15 条里能有 10 条是短片，全塞进列表就是“视频都很短”。这里直接剔掉。
+        val visibleItems = if (source == FeedResolver.SOURCE_YOUTUBE) {
+            items.filterNot { it.pageUrl.contains("/shorts/") }
+        } else items
+        if (artwork.isEmpty()) artwork = visibleItems.firstOrNull()?.artwork.orEmpty()
 
         return ParsedFeed(
             title = title.trim(),
             author = author.trim().ifEmpty { source },
             artwork = artwork,
             description = stripHtml(description),
-            episodes = items.map { it.copy(artwork = it.artwork.ifEmpty { artwork }) }
+            episodes = visibleItems.map { it.copy(artwork = it.artwork.ifEmpty { artwork }) }
         )
     }
 

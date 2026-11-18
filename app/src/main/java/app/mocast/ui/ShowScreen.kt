@@ -1,6 +1,7 @@
 package app.mocast.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,9 +17,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -32,6 +36,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -105,35 +113,52 @@ fun ShowScreen(
             contentPadding = PaddingValues(bottom = if (showMiniPlayer) 96.dp else 24.dp)
         ) {
             item {
-                Row(modifier = Modifier.padding(16.dp)) {
-                    Cover(show.artwork, 92.dp)
-                    Spacer(Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(show.title, style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            show.author,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (show.description.isNotBlank()) {
+                Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp)) {
+                    Row {
+                        Cover(show.artwork, 82.dp)
+                        Spacer(Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                show.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                show.author.ifBlank { show.source },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                show.description,
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 4,
-                                overflow = TextOverflow.Ellipsis,
+                                "共 ${state.episodes.size} 集 · $unplayedCount 未听",
+                                style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
+                    if (show.description.isNotBlank()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            show.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
+            }
+            item {
                 Row(
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "共 ${state.episodes.size} 集 · $unplayedCount 未听",
+                        "单集",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f)
@@ -147,7 +172,6 @@ fun ShowScreen(
                         )
                     }
                 }
-                Spacer(Modifier.height(8.dp))
                 HorizontalDivider()
             }
 
@@ -210,75 +234,86 @@ private fun EpisodeRow(
     onEnqueue: () -> Unit,
     onTogglePlayed: () -> Unit
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
+
     Surface(
         onClick = onClick,
-        color = if (playing) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+        color = if (playing) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
         else MaterialTheme.colorScheme.background,
         modifier = Modifier.fillMaxWidth()
     ) {
-        // 0.4.0 补项：已听的整行变淡（正在播的那集不淡，播放态优先）。
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Text(
-                episode.title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (episode.played && !playing) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-                else MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(Modifier.height(4.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                val date = formatDate(episode.publishedAt)
-                if (date.isNotEmpty()) {
-                    Text(
-                        date,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                val dur = formatDuration(episode.durationSec)
-                if (dur.isNotEmpty()) {
-                    Text(
-                        dur,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (episode.played) {
-                    Text(
-                        "✓ 已听",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                if (episode.transcriptUrl.isNotBlank()) {
-                    Text(
-                        "字幕",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                if (episode.audioUrl.isBlank()) {
-                    Text(
-                        "视频",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                // 0.4.0 下载状态：已下载 / 下载中 / 失败，未下载不占位。
-                if (episode.audioUrl.isNotBlank()) {
+        Row(
+            modifier = Modifier.padding(start = 16.dp, end = 4.dp, top = 11.dp, bottom = 11.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    episode.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = when {
+                        playing -> MaterialTheme.colorScheme.primary
+                        episode.played -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                        else -> MaterialTheme.colorScheme.onSurface
+                    },
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(5.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val date = formatDate(episode.publishedAt)
+                    if (date.isNotEmpty()) {
+                        Text(
+                            if (date.length >= 10) date.substring(5) else date,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    val dur = formatDuration(episode.durationSec)
+                    if (dur.isNotEmpty()) {
+                        Text(
+                            dur,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (playing) {
+                        Text(
+                            "正在播放",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else if (episode.played) {
+                        Text(
+                            "✓ 已听",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
+                        )
+                    }
+                    if (episode.transcriptUrl.isNotBlank()) {
+                        Text(
+                            "字幕",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
+                        )
+                    }
+                    if (episode.audioUrl.isBlank()) {
+                        Text(
+                            "视频",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     when {
                         download?.state == DownloadState.COMPLETED -> Text(
                             "已下载",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
                         )
                         progress?.isActive == true -> Text(
-                            if (progress.percent >= 0) "下载中 ${progress.percent}%"
-                            else "下载中…",
+                            if (progress.percent >= 0) "下载 ${progress.percent}%" else "下载中…",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -287,45 +322,52 @@ private fun EpisodeRow(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error
                         )
-                        download != null -> Text(
-                            "下载未完成",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
             }
-            // 0.4.0 下载操作：YouTube 单集没有直接音频地址，不提供下载。
-            if (episode.audioUrl.isNotBlank()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    when {
-                        download?.state == DownloadState.COMPLETED ->
-                            TextButton(onClick = onDeleteDownload) { Text("删除下载", style = MaterialTheme.typography.labelSmall) }
-                        progress?.isActive == true ->
-                            TextButton(onClick = onCancelDownload) { Text("取消下载", style = MaterialTheme.typography.labelSmall) }
-                        download != null ->
-                            TextButton(onClick = onDownload) { Text("继续下载", style = MaterialTheme.typography.labelSmall) }
-                        else ->
-                            TextButton(onClick = onDownload) { Text("下载", style = MaterialTheme.typography.labelSmall) }
+
+            // 单集的操作收进「⋮」菜单，列表里只留标题和时间，不再每行铺三排按钮。
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "更多操作",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    if (episode.audioUrl.isNotBlank()) {
+                        when {
+                            progress?.isActive == true -> DropdownMenuItem(
+                                text = { Text("取消下载") },
+                                onClick = { menuOpen = false; onCancelDownload() }
+                            )
+                            download?.state == DownloadState.COMPLETED -> DropdownMenuItem(
+                                text = { Text("删除下载") },
+                                onClick = { menuOpen = false; onDeleteDownload() }
+                            )
+                            else -> DropdownMenuItem(
+                                text = { Text(if (download != null) "继续下载" else "下载") },
+                                onClick = { menuOpen = false; onDownload() }
+                            )
+                        }
                     }
-                }
-            }
-            // 0.4.0 补项：稍后听 + 标已听/未听（与下载行分开，不抢下载按钮的位置）。
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                TextButton(onClick = onEnqueue, enabled = !inQueue) {
-                    Text(if (inQueue) "已在队列" else "稍后听", style = MaterialTheme.typography.labelSmall)
-                }
-                TextButton(onClick = onTogglePlayed) {
-                    Text(if (episode.played) "标为未听" else "标为已听", style = MaterialTheme.typography.labelSmall)
+                    DropdownMenuItem(
+                        text = { Text(if (inQueue) "已在稍后听" else "稍后听") },
+                        enabled = !inQueue,
+                        onClick = { menuOpen = false; onEnqueue() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (episode.played) "标为未听" else "标为已听") },
+                        onClick = { menuOpen = false; onTogglePlayed() }
+                    )
                 }
             }
         }
     }
-    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+    HorizontalDivider(
+        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f),
+        modifier = Modifier.padding(start = 16.dp)
+    )
 }

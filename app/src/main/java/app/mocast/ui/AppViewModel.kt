@@ -13,7 +13,10 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import app.mocast.MoCastApp
 import app.mocast.asr.AsrPhase
+import app.mocast.asr.AsrModel
+import app.mocast.asr.AsrModelManager
 import app.mocast.asr.AsrService
+import app.mocast.asr.AudioDecoder
 import app.mocast.asr.TranscriptSource
 import app.mocast.data.Cue
 import app.mocast.data.DisplayMode
@@ -33,6 +36,7 @@ import app.mocast.download.DownloadProgress
 import app.mocast.download.DownloadState
 import app.mocast.net.FeedResolver
 import app.mocast.net.Http
+import app.mocast.net.KeywordParser
 import app.mocast.net.Opml
 import app.mocast.net.OpmlImportSummary
 import app.mocast.net.ProxyConfig
@@ -47,14 +51,23 @@ import app.mocast.youtube.YouTubeStreamResolver
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -63,6 +76,8 @@ sealed interface Screen {
     data object Settings : Screen
     data object Translation : Screen
     data object About : Screen
+    /** 0.4.1：推荐节目独立成页，从设置里点一行进去。 */
+    data object Recommended : Screen
     data class ShowDetail(val showId: String) : Screen
     data class Player(val showId: String, val episodeId: String) : Screen
 }
@@ -79,6 +94,10 @@ data class UiState(
     val currentEpisode: Episode? = null,
     val cues: List<Cue> = emptyList(),
     val translated: List<String> = emptyList(),
+    /** 本集已经收进生词本的词（小写），播放页词片据此显示"已收" */
+    val collectedWords: Set<String> = emptySet(),
+    /** 收藏本集生词后的结果提示（"新增 3 个，已有 5 个"），null 表示没有 */
+    val wordCollectHint: String? = null,
     val transcriptStatus: TranscriptStatus = TranscriptStatus.Idle,
     val translationStatus: TranslationStatus = TranslationStatus.Idle,
     val translationDone: Int = 0,
@@ -99,6 +118,9 @@ data class UiState(
     val videoMode: Boolean = false,
     val videoIsDash: Boolean = false,
     val videoIsHls: Boolean = false,
+    /** YouTube 多音轨：可用语言列表 + 当前选中语言（普通播客为空，不显示切换）。 */
+    val audioLanguages: List<String> = emptyList(),
+    val currentAudioLanguage: String = "",
     // 0.4.0 下载：Room 记录 + 实时进度（都按 episodeId 索引）
     val downloads: Map<String, DownloadEntity> = emptyMap(),
     val downloadProgress: Map<String, DownloadProgress> = emptyMap(),
@@ -107,6 +129,15 @@ data class UiState(
     val asrProgress: Float = 0f,
     val asrError: String? = null,
     val transcriptSource: TranscriptSource = TranscriptSource.NONE,
+    /** AI 字幕这次识别到哪了：已识别到 ms / 音频总长 ms / 是否整集都识别完了。 */
+    val asrAnalyzedMs: Long = 0L,
+    val asrTotalMs: Long = 0L,
+    val asrComplete: Boolean = true,
+    // 0.4.1 设置页模型管理：哪些档位已下载、各占多少空间、正在下载谁 + 进度。
+    val asrReadyModels: Set<String> = emptySet(),
+    val asrModelBytes: Map<String, Long> = emptyMap(),
+    val asrDownloadingModel: String? = null,
+    val asrModelProgress: Float = 0f,
     // 0.4.0 补项：播放队列（持久化在 Room，重启后还在）
     val queue: List<Episode> = emptyList(),
     val queueDialog: Boolean = false,
@@ -121,6 +152,10 @@ data class UiState(
     val sleepEndOfEpisode: Boolean = false,
     // 0.4.0 P0 收尾：OPML 导入结果（弹窗展示，关掉即清）；导出文本（SAF 写盘前暂存）。
     val opmlImportSummary: OpmlImportSummary? = null,
+    /** OPML 批量导入进度：正在跑时 running=true，done/total 用来显示「导入 3/12」。 */
+    val importRunning: Boolean = false,
+    val importDone: Int = 0,
+    val importTotal: Int = 0,
     val opmlExportText: String? = null,
     // 0.4.0 P0 收尾：推荐订阅正在订阅的 feedUrl（该卡片按钮置灰防重复点）。
     val subscribingFeedUrl: String? = null,
@@ -149,6 +184,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var controller: MediaController? = null
     /** 供播放页视频区用的播放器（MediaController 本身就是 Player）。 */
     val player: Player? get() = controller
+    /** YouTube 解析出的原声音轨语言（"en" 等），切视频/音频时用它锁音轨。 */
+    private var youtubeAudioLanguage: String = ""
+    /** 音频模式的按语言流地址（音频模式没有多轨清单，切语言=换地址续播）。 */
+    private var youtubeAudioAlternatives: Map<String, String> = emptyMap()
     private var ticker: Job? = null
     private var translationJob: Job? = null
     private var lastProgressSave = 0L
@@ -156,6 +195,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var segmentEnd = 0
     /** 睡眠定时：倒计时任务 + 到期时间戳（毫秒 epoch），null=没开。 */
     private var sleepJob: Job? = null
+    /** 设置页手动下载 ASR 模型的 job（可取消，不阻塞识别）。 */
+    private var asrModelJob: Job? = null
     private var sleepDeadlineMs: Long? = null
     /** 本集已标过已听（避免 500ms 轮询里反复写库）；换集时清掉。 */
     private var markedPlayedEpisodeId: String? = null
@@ -180,6 +221,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             syncDuration()
+        }
+
+        override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+            // 排查用：把可选的音频语言 + 当前选中项打到 logcat（MoCastYT）。
+            val groups = tracks.groups.filter {
+                it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO
+            }
+            val desc = groups.flatMap { g ->
+                (0 until g.length).map { i ->
+                    val lang = g.getTrackFormat(i).language ?: "?"
+                    if (g.isTrackSelected(i)) "$lang*" else lang
+                }
+            }
+            android.util.Log.i("MoCastYT", "audioTracks=$desc")
+            // 给播放页的 en/中 切换用：可用语言（去重）+ 当前选中语言。
+            val all = groups.flatMap { g ->
+                (0 until g.length).mapNotNull { i -> g.getTrackFormat(i).language }
+            }.distinct()
+            val selected = groups.firstNotNullOfOrNull { g ->
+                (0 until g.length).firstOrNull { g.isTrackSelected(it) }
+                    ?.let { g.getTrackFormat(it).language }
+            }
+            _ui.update {
+                // 音频模式只求一条流，这里拿到的语言列表往往是空的/单条；多轨才覆盖（解析器给的清单为准）
+                val merged = if (all.size > 1) all else it.audioLanguages
+                it.copy(audioLanguages = merged, currentAudioLanguage = selected ?: it.currentAudioLanguage)
+            }
         }
     }
 
@@ -266,11 +334,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissAddDialog() = _ui.update { it.copy(addDialog = false) }
 
-    fun openSettings() = _ui.update { it.copy(screen = Screen.Settings, error = null) }
+    fun openSettings() {
+        // 进设置页先把模型下载状态刷一遍（可能在别处下好/删过）。
+        refreshAsrModels()
+        _ui.update { it.copy(screen = Screen.Settings, error = null) }
+    }
 
     fun openTranslation() = _ui.update { it.copy(screen = Screen.Translation, error = null) }
 
     fun openAbout() = _ui.update { it.copy(screen = Screen.About, error = null) }
+
+    fun openRecommended() = _ui.update { it.copy(screen = Screen.Recommended, error = null) }
 
     fun saveSettings(settings: Settings) {
         settingsStore.save(settings)
@@ -415,22 +489,120 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             resolvedAudioUrl = streams.audioUrl,
                             videoMode = streams.isVideo,
                             videoIsDash = streams.videoIsDash,
-                            videoIsHls = streams.videoIsHls
+                            videoIsHls = streams.videoIsHls,
+                            audioLanguages = streams.audioAlternatives.keys.toList(),
+                            currentAudioLanguage = streams.audioLanguage
                         )
                     }
                     val playUrl = if (streams.isVideo) streams.videoUrl else streams.audioUrl
+                    youtubeAudioLanguage = streams.audioLanguage
+                    youtubeAudioAlternatives = streams.audioAlternatives
+                    applyPreferredAudioLanguage(streams.audioLanguage)
                     val mimeType = when {
                         streams.videoIsDash -> MimeTypes.APPLICATION_MPD
                         streams.videoIsHls -> MimeTypes.APPLICATION_M3U8
                         else -> null
                     }
                     bindPlayer(episode, show, saved, playUrl = playUrl, mimeType = mimeType, autoplay = true)
+                    // HLS/DASH 的音轨是 prepare 之后才出现的，绑完再补一次偏好，否则会落到配音轨（中文）。
+                    viewModelScope.launch {
+                        kotlinx.coroutines.delay(1_200)
+                        applyPreferredAudioLanguage(streams.audioLanguage)
+                    }
                     loadTranscript(episode)
                 }
                 .onFailure { e ->
                     _ui.update { it.copy(busy = false, error = friendly(e)) }
                 }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 生词本（0.5 第一批：只做采集，不放页面）
+    // ------------------------------------------------------------------
+
+    /** 播放页点词片：已收则取消（只删本集释义），未收则收进来。 */
+    fun toggleCollectedWord(word: String, pos: String, ipa: String, gloss: String, cueIndex: Int) {
+        val state = _ui.value
+        val episode = state.currentEpisode ?: return
+        val key = word.trim().lowercase()
+        if (key.isBlank()) return
+        val cue = state.cues.getOrNull(cueIndex)
+        val level = state.settings.keywordLevel.name
+        viewModelScope.launch(Dispatchers.IO) {
+            if (state.collectedWords.contains(key)) {
+                roomStore.uncollectWordInEpisode(key, episode.id)
+                val set = roomStore.collectedWordsInEpisode(episode.id)
+                _ui.update { it.copy(collectedWords = set, wordCollectHint = "已移出：$word") }
+            } else {
+                val added = roomStore.collectWord(
+                    word = key,
+                    pos = pos,
+                    ipa = ipa,
+                    gloss = gloss,
+                    level = level,
+                    example = cue?.text.orEmpty(),
+                    showId = episode.showId,
+                    episodeId = episode.id,
+                    startMs = cue?.startMs ?: 0L
+                )
+                val set = roomStore.collectedWordsInEpisode(episode.id)
+                _ui.update {
+                    it.copy(
+                        collectedWords = set,
+                        wordCollectHint = if (added) "已收：$word" else "已有：$word"
+                    )
+                }
+            }
+        }
+    }
+
+    /** 一键收藏本集全部生词（走同一套去重逻辑，不自动触发）。 */
+    fun collectAllWordsInEpisode() {
+        val state = _ui.value
+        val episode = state.currentEpisode ?: return
+        if (state.translated.isEmpty()) return
+        val lines = state.translated
+        val cues = state.cues
+        val level = state.settings.keywordLevel.name
+        viewModelScope.launch(Dispatchers.IO) {
+            var added = 0
+            var existing = 0
+            var parsed = 0
+            lines.forEachIndexed { index, line ->
+                val cue = cues.getOrNull(index)
+                KeywordParser.parseLine(line).forEach { w ->
+                    parsed++
+                    val ok = roomStore.collectWord(
+                        word = w.word,
+                        pos = w.pos,
+                        ipa = w.ipa,
+                        gloss = w.gloss,
+                        level = level,
+                        example = cue?.text.orEmpty(),
+                        showId = episode.showId,
+                        episodeId = episode.id,
+                        startMs = cue?.startMs ?: 0L
+                    )
+                    if (ok) added++ else existing++
+                }
+            }
+            val set = roomStore.collectedWordsInEpisode(episode.id)
+            _ui.update {
+                it.copy(
+                    collectedWords = set,
+                    wordCollectHint = when {
+                        parsed == 0 -> "本集没有可收的生词"
+                        else -> "新增 $added 个，已有 $existing 个"
+                    }
+                )
+            }
+        }
+    }
+
+    /** 关掉那条结果提示。 */
+    fun clearWordCollectHint() {
+        _ui.update { it.copy(wordCollectHint = null) }
     }
 
     /**
@@ -459,8 +631,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             else -> null
         } else null
         _ui.update { it.copy(videoMode = toVideo) }
+        applyPreferredAudioLanguage(youtubeAudioLanguage)
         // 从当前位置续播，不从头开始。
         bindPlayer(episode, state.currentShow, state.positionMs, playUrl = playUrl, mimeType = mimeType, autoplay = true)
+    }
+
+    /** 播放页 en/中 切换：把音轨切到指定语言（YouTube 原声 / 机器配音）。 */
+    fun setYoutubeAudioLanguage(language: String) {
+        if (language.isBlank()) return
+        val state = _ui.value
+        val episode = state.currentEpisode ?: return
+        youtubeAudioLanguage = language
+        // 音频模式没有多轨清单：找到该语言的地址，从当前位置换流续播。
+        val altUrl = youtubeAudioAlternatives.entries
+            .firstOrNull { it.key.startsWith(language.lowercase()) }?.value
+        if (!state.videoMode && !altUrl.isNullOrBlank()) {
+            bindPlayer(episode, state.currentShow, state.positionMs, playUrl = altUrl, mimeType = null, autoplay = true)
+        } else {
+            applyPreferredAudioLanguage(language)
+        }
+        _ui.update { it.copy(currentAudioLanguage = language) }
+    }
+
+    /**
+     * 把音轨锁到原声语言：YouTube 现在给很多视频挂了机器配音轨（中文等），
+     * DASH/HLS 清单默认可能直接选中配音轨。语言为空时不动用户的默认设置。
+     */
+    private fun applyPreferredAudioLanguage(language: String) {
+        val p = player ?: return
+        if (language.isBlank()) return
+        runCatching {
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                .setPreferredAudioLanguage(language)
+                .build()
+        }
     }
 
     private fun bindPlayer(
@@ -495,16 +699,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun loadTranscript(episode: Episode) {
         _ui.update { it.copy(transcriptStatus = TranscriptStatus.Loading) }
+        // 生词本状态先按本集加载，词片才能正确显示"已收"。
+        viewModelScope.launch(Dispatchers.IO) {
+            val collected = roomStore.collectedWordsInEpisode(episode.id)
+            _ui.update { it.copy(collectedWords = collected, wordCollectHint = null) }
+        }
         viewModelScope.launch {
             runCatching { repo.transcriptOf(episode) }
                 .onSuccess { result ->
                     val settings = _ui.value.settings
+                    // AI 字幕可能是上次中断留下的半截：算一下识别到哪，播放页据此提示“没识别完”。
+                    val analyzed = if (result.source == TranscriptSource.ASR) {
+                        result.cues.maxOfOrNull { it.endMs } ?: 0L
+                    } else 0L
+                    val total = if (result.source == TranscriptSource.ASR) {
+                        withContext(Dispatchers.IO) { asrAudioDurationMs(episode) }
+                    } else 0L
+                    val complete = result.source != TranscriptSource.ASR ||
+                        total <= 0L || analyzed >= total - 30_000L
                     val cached = translationCache.load(episode.id, settings.translationVariant)
                         ?.takeIf { it.size == result.cues.size && it.any { line -> line.isNotBlank() } }
                     _ui.update {
                         it.copy(
                             cues = result.cues,
                             transcriptSource = result.source,
+                            asrAnalyzedMs = analyzed,
+                            asrTotalMs = total,
+                            asrComplete = complete,
                             transcriptStatus = if (result.cues.isEmpty()) TranscriptStatus.Empty else TranscriptStatus.Ready,
                             translated = cached.orEmpty(),
                             translationStatus = if (cached != null) TranslationStatus.Ready else TranslationStatus.Idle,
@@ -519,6 +740,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     _ui.update { it.copy(transcriptStatus = TranscriptStatus.Error, error = friendly(e)) }
                 }
         }
+    }
+
+    /** AI 字幕覆盖率用：优先读本地音频的真实时长，读不到退回 RSS 里写的时长。 */
+    private fun asrAudioDurationMs(episode: Episode): Long {
+        return runCatching {
+            val file = AsrService.resolveAudioFile(getApplication(), episode.id)
+                ?: return episode.durationSec * 1000L
+            val probed = AudioDecoder().probeDurationMs(file)
+            if (probed > 0) probed else episode.durationSec * 1000L
+        }.getOrDefault(episode.durationSec * 1000L)
     }
 
     fun translateCurrent() {
@@ -724,26 +955,51 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(error = e.message ?: "OPML 解析失败") }
             return
         }
+        if (_ui.value.importRunning) return
         viewModelScope.launch {
-            val existing = repo.shows().map { it.feedUrl.trim() }.toSet()
+            val existing = withContext(Dispatchers.IO) { repo.shows().map { it.feedUrl.trim() }.toSet() }
+            val todo = feeds.filter { it.feedUrl.trim() !in existing }
+            val skipped = feeds.size - todo.size
             var added = 0
-            var skipped = 0
+            var done = skipped
             val failures = ArrayList<String>()
-            for (feed in feeds) {
-                if (feed.feedUrl.trim() in existing) {
-                    skipped++
-                    continue
-                }
-                runCatching { repo.subscribe(feed.feedUrl) }
-                    .onSuccess { added++ }
-                    .onFailure { e ->
-                        if (failures.size < 10) failures.add("${feed.title}：${friendly(e)}")
+            val lock = Mutex()
+            _ui.update {
+                it.copy(
+                    importRunning = true,
+                    importDone = skipped,
+                    importTotal = feeds.size
+                )
+            }
+            // 并发拉取：以前一条条排队，20 个源要等好几分钟才出内容；
+            // 现在最多 4 条同时拉，每成功一条就先把列表刷新出来。
+            val semaphore = Semaphore(4)
+            coroutineScope {
+                todo.map { feed ->
+                    async(Dispatchers.IO) {
+                        semaphore.withPermit {
+                            val ok = runCatching { repo.subscribe(feed.feedUrl) }.isSuccess
+                            lock.withLock {
+                                done++
+                                if (ok) added++
+                                else if (failures.size < 10) failures.add("${feed.title}：订阅失败")
+                                _ui.update { s ->
+                                    s.copy(
+                                        importDone = done,
+                                        shows = if (ok) repo.shows() else s.shows
+                                    )
+                                }
+                            }
+                        }
                     }
+                }.awaitAll()
             }
             val failed = feeds.size - added - skipped
             _ui.update {
                 it.copy(
                     shows = repo.shows(),
+                    importRunning = false,
+                    importDone = feeds.size,
                     opmlImportSummary = OpmlImportSummary(added, skipped, failed, failures)
                 )
             }
@@ -1046,6 +1302,54 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         AsrService.cancel(getApplication())
     }
 
+    // 设置页“提前下载模型”：与播放页按需下载走同一套 AsrModelManager，
+    // 下好的模型离线可用，之后生成字幕不再等下载。
+    private val asrModels by lazy { AsrModelManager(getApplication()) }
+
+    fun refreshAsrModels() {
+        val ready = AsrModel.entries.filter { asrModels.isReady(it) }.map { it.key }.toSet()
+        val bytes = AsrModel.entries.associate { it.key to asrModels.downloadedBytes(it) }
+        _ui.update { it.copy(asrReadyModels = ready, asrModelBytes = bytes) }
+    }
+
+    fun downloadAsrModel(key: String) {
+        val model = AsrModel.from(key) ?: return
+        if (_ui.value.asrDownloadingModel != null) return
+        _ui.update { it.copy(asrDownloadingModel = key, asrModelProgress = 0f, error = null) }
+        asrModelJob = viewModelScope.launch {
+            runCatching {
+                asrModels.ensureModel(model, _ui.value.settings.asrWifiOnly) { p ->
+                    _ui.update { it.copy(asrModelProgress = p) }
+                }
+            }.onSuccess {
+                refreshAsrModels()
+                _ui.update { it.copy(asrDownloadingModel = null, asrModelProgress = 0f) }
+            }.onFailure { e ->
+                refreshAsrModels()
+                _ui.update {
+                    it.copy(
+                        asrDownloadingModel = null,
+                        asrModelProgress = 0f,
+                        error = friendly(e)
+                    )
+                }
+            }
+        }
+    }
+
+    fun cancelAsrModelDownload() {
+        asrModelJob?.cancel()
+        asrModelJob = null
+        _ui.update { it.copy(asrDownloadingModel = null, asrModelProgress = 0f) }
+    }
+
+    fun deleteAsrModel(key: String) {
+        val model = AsrModel.from(key) ?: return
+        if (_ui.value.asrDownloadingModel == key) cancelAsrModelDownload()
+        asrModels.deleteModel(model)
+        refreshAsrModels()
+    }
+
     fun setAsrModel(model: String) {
         val updated = _ui.value.settings.copy(asrModel = model)
         settingsStore.save(updated)
@@ -1100,6 +1404,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             is Screen.ShowDetail -> _ui.update { it.copy(screen = Screen.Home, episodes = emptyList()) }
             Screen.Translation, Screen.About ->
                 _ui.update { it.copy(screen = Screen.Settings) }
+            // 推荐页是从设置进的，返回也回设置。
+            Screen.Recommended -> _ui.update { it.copy(screen = Screen.Settings) }
             Screen.Settings -> _ui.update { it.copy(screen = Screen.Home) }
             Screen.Home -> Unit
         }
