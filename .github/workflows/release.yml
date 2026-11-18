@@ -260,17 +260,10 @@ jobs:
           VERSION_NAME: ${{ needs.build.outputs.version_name }}
 
         run: |
-
           set -euo pipefail
-
           gh release create "$GITHUB_REF_NAME" \
-
             "dist/MoCast-$VERSION_NAME.apk" \
-
             update.json \
-
             --title "MoCast $VERSION_NAME" \
-
             --notes "$(git log -1 --pretty=%B)" \
-
             --verify-tag
