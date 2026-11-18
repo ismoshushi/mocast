@@ -52,7 +52,11 @@ data class Episode(
     val durationSec: Int,
     val publishedAt: Long,
     val transcriptUrl: String,
-    val transcriptType: String
+    val transcriptType: String,
+    /** 已听标记（0.4.0 补项）：进度 >=95% 或播完自动标已听，也可手动切换。旧数据默认未听。 */
+    val played: Boolean = false,
+    /** 标为已听的时间（毫秒 epoch），未听为 0。 */
+    val playedAt: Long = 0L
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -66,6 +70,8 @@ data class Episode(
         put("publishedAt", publishedAt)
         put("transcriptUrl", transcriptUrl)
         put("transcriptType", transcriptType)
+        put("played", played)
+        put("playedAt", playedAt)
     }
 
     companion object {
@@ -80,7 +86,9 @@ data class Episode(
             durationSec = o.optInt("durationSec"),
             publishedAt = o.optLong("publishedAt"),
             transcriptUrl = o.optString("transcriptUrl"),
-            transcriptType = o.optString("transcriptType")
+            transcriptType = o.optString("transcriptType"),
+            played = o.optBoolean("played", false),
+            playedAt = o.optLong("playedAt", 0L)
         )
     }
 }

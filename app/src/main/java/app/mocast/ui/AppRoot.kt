@@ -1,7 +1,10 @@
 package app.mocast.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,10 +28,28 @@ import kotlinx.coroutines.delay
 fun AppRoot(vm: AppViewModel) {
     val state by vm.ui.collectAsStateWithLifecycle()
 
+    // 0.4.0 P0 收尾：OPML 导入（系统文件选择器）与导出（SAF 保存文件）。
+    // 导入的 Uri 直接交给 ViewModel 读；导出先由 ViewModel 备好文本，再弹保存框。
+    val importOpmlLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri -> if (uri != null) vm.importOpmlUri(uri) }
+    val exportOpmlLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/xml")
+    ) { uri ->
+        if (uri != null) vm.writeOpmlExport(uri) else vm.consumeOpmlExport()
+    }
+    LaunchedEffect(state.opmlExportText) {
+        if (state.opmlExportText != null) {
+            exportOpmlLauncher.launch("mocast-subscriptions.opml")
+        }
+    }
+
     MoCastTheme(state.settings.themeMode) {
         BackHandler(enabled = state.screen != Screen.Home) { vm.back() }
 
         Box(Modifier.fillMaxSize()) {
+            // 迷你播放条（0.4.0 补项）：有当前单集且不在播放页时常驻底部。
+            val showMiniPlayer = state.currentEpisode != null && state.screen != Screen.Player
             when (val screen = state.screen) {
                 Screen.Home -> HomeScreen(
                     state = state,
@@ -36,7 +57,11 @@ fun AppRoot(vm: AppViewModel) {
                     onDismissAdd = vm::dismissAddDialog,
                     onSubmit = vm::addSubscription,
                     onOpenShow = vm::openShow,
-                    onSettings = vm::openSettings
+                    onSettings = vm::openSettings,
+                    showMiniPlayer = showMiniPlayer,
+                    onSubscribeRecommended = vm::subscribeRecommended,
+                    subscribingFeedUrl = state.subscribingFeedUrl,
+                    subscribedFeedUrls = state.shows.map { it.feedUrl.trim() }.toSet()
                 )
 
                 Screen.Settings -> SettingsScreen(
@@ -44,7 +69,12 @@ fun AppRoot(vm: AppViewModel) {
                     onBack = vm::back,
                     onOpenTranslation = vm::openTranslation,
                     onOpenAbout = vm::openAbout,
-                    onThemeMode = vm::setThemeMode
+                    onThemeMode = vm::setThemeMode,
+                    onSaveSettings = vm::saveSettings,
+                    onImportOpml = { importOpmlLauncher.launch("*/*") },
+                    onExportOpml = vm::prepareOpmlExport,
+                    opmlImportSummary = state.opmlImportSummary,
+                    onDismissOpmlSummary = vm::dismissOpmlSummary
                 )
 
                 Screen.Translation -> TranslationScreen(
@@ -53,7 +83,12 @@ fun AppRoot(vm: AppViewModel) {
                     onSave = vm::saveSettings,
                     onMode = vm::setTranslationMode,
                     onLevel = vm::setKeywordLevel,
-                    onAutoExtend = vm::setAutoExtend
+                    onAutoExtend = vm::setAutoExtend,
+                    onTestConnection = vm::testConnection,
+                    testRunning = state.testRunning,
+                    testResult = state.testResult,
+                    testOk = state.testOk,
+                    onClearTestResult = vm::clearTestResult
                 )
 
                 Screen.About -> AboutScreen(
@@ -72,19 +107,66 @@ fun AppRoot(vm: AppViewModel) {
                     onOpenEpisode = vm::openEpisode,
                     onDelete = { vm.requestDelete(screen.showId) },
                     onConfirmDelete = vm::confirmDelete,
-                    onCancelDelete = vm::cancelDelete
+                    onCancelDelete = vm::cancelDelete,
+                    onDownload = vm::downloadEpisode,
+                    onCancelDownload = { episode -> vm.cancelDownload(episode.id) },
+                    onDeleteDownload = { episode -> vm.deleteDownload(episode.id) },
+                    onEnqueue = vm::enqueueEpisode,
+                    onTogglePlayed = vm::togglePlayed,
+                    onToggleUnplayedOnly = vm::toggleUnplayedOnly,
+                    showMiniPlayer = showMiniPlayer
                 )
 
                 is Screen.Player -> PlayerScreen(
                     state = state,
+                    player = vm.player,
                     onBack = vm::back,
                     onTogglePlay = vm::togglePlay,
                     onSeek = vm::seekTo,
                     onSeekBy = vm::seekBy,
                     onSpeed = vm::setSpeed,
                     onTranslate = vm::translateCurrent,
-                    onMode = vm::setDisplayMode
+                    onMode = vm::setDisplayMode,
+                    onToggleVideoMode = vm::toggleVideoMode,
+                    onDownload = { state.currentEpisode?.let { vm.downloadEpisode(it) } },
+                    onCancelDownload = { state.currentEpisode?.let { vm.cancelDownload(it.id) } },
+                    onDeleteDownload = { state.currentEpisode?.let { vm.deleteDownload(it.id) } },
+                    onStartAsr = vm::startAsr,
+                    onCancelAsr = vm::cancelAsr,
+                    onSleepMinutes = vm::setSleepMinutes,
+                    onSleepEndOfEpisode = vm::setSleepEndOfEpisode,
+                    onCancelSleep = vm::cancelSleep
                 )
+            }
+
+            // 底部常驻区：迷你播放条在上，出错提示在下（两者同时出现时不重叠）。
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+            ) {
+                if (showMiniPlayer) {
+                    MiniPlayer(
+                        state = state,
+                        onOpenPlayer = vm::openPlayer,
+                        onTogglePlay = vm::togglePlay,
+                        onOpenQueue = vm::openQueueDialog
+                    )
+                }
+                if (state.queueDialog) {
+                    QueueDialog(
+                        state = state,
+                        onDismiss = vm::dismissQueueDialog,
+                        onPlay = { episode ->
+                            vm.dismissQueueDialog()
+                            vm.openEpisode(episode)
+                        },
+                        onMoveUp = { episode -> vm.moveQueue(episode.id, up = true) },
+                        onMoveDown = { episode -> vm.moveQueue(episode.id, up = false) },
+                        onRemove = { episode -> vm.removeFromQueue(episode.id) },
+                        onClear = vm::clearQueue
+                    )
+                }
             }
 
             state.error?.let { message ->
@@ -100,7 +182,8 @@ fun AppRoot(vm: AppViewModel) {
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 20.dp)
+                        // 迷你播放条在时把提示往上顶 72dp，避免盖住播放条。
+                        .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = if (showMiniPlayer) 84.dp else 20.dp)
                         .fillMaxWidth()
                 ) {
                     Row(

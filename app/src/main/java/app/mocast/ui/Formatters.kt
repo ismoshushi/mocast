@@ -22,3 +22,6 @@ fun formatDuration(sec: Int): String {
     if (sec <= 0) return ""
     return formatTime(sec * 1000L)
 }
+
+/** 睡眠定时剩余时间：不足 1 小时显示 mm:ss，超过显示 h:mm:ss（复用 formatTime）。 */
+fun formatSleepRemaining(ms: Long): String = formatTime(ms)

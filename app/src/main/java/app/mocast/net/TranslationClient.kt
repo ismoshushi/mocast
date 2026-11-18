@@ -12,6 +12,78 @@ import org.json.JSONObject
 
 class TranslationClient {
 
+    /**
+     * 测试连接（0.4.0 P0 收尾）：只发一个极小试探请求（翻一句 "Hello"），
+     * 不写翻译缓存、不翻整集。返回耗时与中文结论，调用方直接展示。
+     * 失败按 HTTP 码 / 异常类型分中文原因，不抛错（除非调用方自己要抛）。
+     */
+    data class ConnectionTestResult(val ok: Boolean, val latencyMs: Long, val message: String)
+
+    suspend fun testConnection(settings: Settings): ConnectionTestResult = withContext(Dispatchers.IO) {
+        if (settings.baseUrl.isBlank() || settings.apiKey.isBlank() || settings.model.isBlank()) {
+            return@withContext ConnectionTestResult(false, 0, "先填 Base URL、API Key 和模型")
+        }
+        val url = settings.baseUrl.trimEnd('/') + "/chat/completions"
+        val body = JSONObject().apply {
+            put("model", settings.model)
+            put("temperature", 0.0)
+            put("max_tokens", 10)
+            if (isZhipu(settings.baseUrl)) {
+                put("thinking", JSONObject().put("type", "disabled"))
+            }
+            put("messages", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", "Hello")
+                })
+            })
+        }
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer ${settings.apiKey.trim()}")
+            .header("Content-Type", "application/json")
+            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+        val start = System.currentTimeMillis()
+        try {
+            Http.client.newCall(request).execute().use { resp ->
+                val elapsed = System.currentTimeMillis() - start
+                val raw = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) {
+                    val reason = when (resp.code) {
+                        401, 403 -> "API Key 无效（HTTP ${resp.code}），去设置里检查 Key 是否填错、是否过期"
+                        404 -> "模型不存在（HTTP 404），检查模型名是否写错，或该服务商没有这个模型"
+                        429 -> "请求被限流（HTTP 429），稍后再试"
+                        in 500..599 -> "服务商出错（HTTP ${resp.code}），稍后再试"
+                        else -> "连接失败（HTTP ${resp.code}）：${raw.take(120)}"
+                    }
+                    return@withContext ConnectionTestResult(false, elapsed, reason)
+                }
+                val content = runCatching {
+                    JSONObject(raw).optJSONArray("choices")
+                        ?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
+                }.getOrNull().orEmpty()
+                if (content.isBlank()) {
+                    return@withContext ConnectionTestResult(false, elapsed, "返回格式异常：服务商没给回模型回复")
+                }
+                return@withContext ConnectionTestResult(true, elapsed, "连接正常，耗时 ${elapsed}ms")
+            }
+        } catch (e: Exception) {
+            val elapsed = System.currentTimeMillis() - start
+            val msg = e.message.orEmpty()
+            val reason = when {
+                e is java.net.SocketTimeoutException || msg.contains("timeout", ignoreCase = true) ->
+                    "连接超时，检查网络或代理，服务商也可能正忙"
+                e is java.net.UnknownHostException || msg.contains("Unable to resolve host") ->
+                    "地址连不上：Base URL 的域名解析失败，检查地址是否写错"
+                msg.contains("Failed to connect") || msg.contains("Connection refused") ->
+                    "地址连不上：连不上 Base URL，检查地址、网络或代理"
+                else -> "连接失败：$msg"
+            }
+            return@withContext ConnectionTestResult(false, elapsed, reason)
+        }
+    }
+
     suspend fun translate(settings: Settings, texts: List<String>, firstNumber: Int = 1): List<String> =
         withContext(Dispatchers.IO) {
             if (texts.isEmpty()) return@withContext emptyList()

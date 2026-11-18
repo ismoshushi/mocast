@@ -43,6 +43,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.mocast.data.RecommendedShows
 import app.mocast.data.Show
 import coil.compose.AsyncImage
 
@@ -54,7 +55,13 @@ fun HomeScreen(
     onDismissAdd: () -> Unit,
     onSubmit: (String) -> Unit,
     onOpenShow: (String) -> Unit,
-    onSettings: () -> Unit
+    onSettings: () -> Unit,
+    /** 迷你播放条出现时：列表底部留空、订阅按钮上移，避免被播放条盖住。 */
+    showMiniPlayer: Boolean = false,
+    /** 0.4.0 P0 收尾：推荐订阅（只在无订阅时展示，点一个订阅一个）。 */
+    onSubscribeRecommended: (String) -> Unit = {},
+    subscribingFeedUrl: String? = null,
+    subscribedFeedUrls: Set<String> = emptySet()
 ) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -84,22 +91,47 @@ fun HomeScreen(
             ExtendedFloatingActionButton(
                 onClick = onAddClick,
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("订阅") }
+                text = { Text("订阅") },
+                modifier = if (showMiniPlayer) Modifier.padding(bottom = 72.dp) else Modifier
             )
         }
     ) { padding ->
         if (state.shows.isEmpty()) {
-            EmptyHome(Modifier.padding(padding))
+            // 0.4.0 P0 收尾：无订阅时给推荐区，不自动订阅任何节目。
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, if (showMiniPlayer) 88.dp else 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item { EmptyHome() }
+                item {
+                    Text(
+                        "推荐订阅 · 点一个订阅一个",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+                items(RecommendedShows.all, key = { it.feedUrl }) { show ->
+                    RecommendedCard(
+                        show = show,
+                        subscribed = show.feedUrl.trim() in subscribedFeedUrls,
+                        subscribing = subscribingFeedUrl == show.feedUrl,
+                        onSubscribe = { onSubscribeRecommended(show.feedUrl) }
+                    )
+                }
+            }
         } else {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
-                contentPadding = PaddingValues(16.dp),
+                contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, if (showMiniPlayer) 88.dp else 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(state.shows, key = { it.id }) { show ->
-                    ShowCard(show) { onOpenShow(show.id) }
+                    ShowCard(show, state.unplayedCounts[show.id] ?: 0) { onOpenShow(show.id) }
                 }
             }
         }
@@ -115,25 +147,93 @@ fun HomeScreen(
 }
 
 @Composable
-private fun EmptyHome(modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(32.dp)
-        ) {
-            Text("还没有订阅", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
+private fun EmptyHome() {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 24.dp, horizontal = 16.dp)
+    ) {
+        Text("还没有订阅", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "支持 RSS 直链、Apple Podcasts、YouTube 频道/播放列表、小宇宙。\n点右下角「订阅」粘贴链接即可，也可以先从下面推荐里挑一个。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun RecommendedCard(
+    show: app.mocast.data.RecommendedShow,
+    subscribed: Boolean,
+    subscribing: Boolean,
+    onSubscribe: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    show.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Text(
+                        show.category,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(4.dp))
             Text(
-                "支持 RSS 直链、Apple Podcasts、YouTube 频道/播放列表、小宇宙。\n点右下角「订阅」粘贴链接即可。",
-                style = MaterialTheme.typography.bodyMedium,
+                show.blurb,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "RSS 来源：${show.source}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(
+                    enabled = !subscribed && !subscribing,
+                    onClick = onSubscribe
+                ) {
+                    Text(
+                        when {
+                            subscribed -> "已订阅"
+                            subscribing -> "订阅中…"
+                            else -> "订阅"
+                        }
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun ShowCard(show: Show, onClick: () -> Unit) {
+private fun ShowCard(show: Show, unplayedCount: Int, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(18.dp),
@@ -159,11 +259,28 @@ private fun ShowCard(show: Show, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    "${show.episodeCount} 集 · ${formatDate(show.lastUpdated)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "${show.episodeCount} 集 · ${formatDate(show.lastUpdated)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    // 0.4.0 补项：未听数角标（0 不显示，不占位）。
+                    if (unplayedCount > 0) {
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primary
+                        ) {
+                            Text(
+                                "${unplayedCount} 未听",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
     }

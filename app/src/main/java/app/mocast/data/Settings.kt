@@ -58,7 +58,32 @@ data class Settings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val translationMode: TranslationMode = TranslationMode.FULL,
     val keywordLevel: KeywordLevel = KeywordLevel.SENIOR,
-    val autoExtend: Boolean = true
+    val autoExtend: Boolean = true,
+    // 代理（0.4.0）
+    val proxyEnabled: Boolean = false,
+    /** "HTTP" 或 "SOCKS" */
+    val proxyType: String = "HTTP",
+    val proxyHost: String = "",
+    val proxyPort: Int = 8080,
+    val proxyUsername: String = "",
+    val proxyPassword: String = "",
+    // 下载（0.4.0）：默认只在 Wi-Fi 下下载
+    val downloadWifiOnly: Boolean = true,
+    // 本机 ASR（0.4.0）：模型档位 tiny / base / small，默认 base
+    val asrModel: String = "base",
+    /** 模型下载仅限 Wi-Fi，默认 true */
+    val asrWifiOnly: Boolean = true,
+    /** 下载完成后自动生成 AI 字幕（仅无官方字幕的集），默认 false */
+    val asrAuto: Boolean = false,
+    // 播放（0.4.0 补项）：记住上次倍速，下次打开沿用，不再每次回到 1 倍
+    val playbackSpeed: Float = 1f,
+    // 自动刷新（0.4.0 补项）：默认每 6 小时后台刷新全部订阅
+    val autoRefreshEnabled: Boolean = true,
+    /** 自动刷新仅限 Wi-Fi，默认 true */
+    val autoRefreshWifiOnly: Boolean = true,
+    // 翻译费用预估（0.4.0 P0 收尾）：可选，每 1k token 单价（美元），0 = 没填。
+    // 填了就按它算整集预估（输入+输出同价）；没填就查内置单价表，查不到只显示 token 数。
+    val customPricePer1kTokens: Float = 0f
 ) {
     val ready: Boolean get() = apiKey.isNotBlank() && baseUrl.isNotBlank() && model.isNotBlank()
 
@@ -88,7 +113,21 @@ class SettingsStore(context: Context) {
         themeMode = ThemeMode.from(prefs.getString(KEY_THEME, null)),
         translationMode = TranslationMode.from(prefs.getString(KEY_TR_MODE, null)),
         keywordLevel = KeywordLevel.from(prefs.getString(KEY_TR_LEVEL, null)),
-        autoExtend = prefs.getBoolean(KEY_AUTO_EXTEND, true)
+        autoExtend = prefs.getBoolean(KEY_AUTO_EXTEND, true),
+        proxyEnabled = prefs.getBoolean(KEY_PROXY_ENABLED, false),
+        proxyType = prefs.getString(KEY_PROXY_TYPE, null) ?: "HTTP",
+        proxyHost = prefs.getString(KEY_PROXY_HOST, null) ?: "",
+        proxyPort = prefs.getInt(KEY_PROXY_PORT, 8080),
+        proxyUsername = prefs.getString(KEY_PROXY_USER, null) ?: "",
+        proxyPassword = prefs.getString(KEY_PROXY_PASS, null) ?: "",
+        downloadWifiOnly = prefs.getBoolean(KEY_DL_WIFI_ONLY, true),
+        asrModel = prefs.getString(KEY_ASR_MODEL, null) ?: "base",
+        asrWifiOnly = prefs.getBoolean(KEY_ASR_WIFI, true),
+        asrAuto = prefs.getBoolean(KEY_ASR_AUTO, false),
+        playbackSpeed = prefs.getFloat(KEY_SPEED, 1f).coerceIn(0.5f, 3f),
+        autoRefreshEnabled = prefs.getBoolean(KEY_AUTO_REFRESH, true),
+        autoRefreshWifiOnly = prefs.getBoolean(KEY_AUTO_REFRESH_WIFI, true),
+        customPricePer1kTokens = prefs.getFloat(KEY_CUSTOM_PRICE, 0f).coerceAtLeast(0f)
     )
 
     fun save(settings: Settings) {
@@ -102,6 +141,20 @@ class SettingsStore(context: Context) {
             .putString(KEY_TR_MODE, settings.translationMode.name)
             .putString(KEY_TR_LEVEL, settings.keywordLevel.name)
             .putBoolean(KEY_AUTO_EXTEND, settings.autoExtend)
+            .putBoolean(KEY_PROXY_ENABLED, settings.proxyEnabled)
+            .putString(KEY_PROXY_TYPE, settings.proxyType)
+            .putString(KEY_PROXY_HOST, settings.proxyHost)
+            .putInt(KEY_PROXY_PORT, settings.proxyPort)
+            .putString(KEY_PROXY_USER, settings.proxyUsername)
+            .putString(KEY_PROXY_PASS, settings.proxyPassword)
+            .putBoolean(KEY_DL_WIFI_ONLY, settings.downloadWifiOnly)
+            .putString(KEY_ASR_MODEL, settings.asrModel)
+            .putBoolean(KEY_ASR_WIFI, settings.asrWifiOnly)
+            .putBoolean(KEY_ASR_AUTO, settings.asrAuto)
+            .putFloat(KEY_SPEED, settings.playbackSpeed)
+            .putBoolean(KEY_AUTO_REFRESH, settings.autoRefreshEnabled)
+            .putBoolean(KEY_AUTO_REFRESH_WIFI, settings.autoRefreshWifiOnly)
+            .putFloat(KEY_CUSTOM_PRICE, settings.customPricePer1kTokens)
             .apply()
     }
 
@@ -115,5 +168,19 @@ class SettingsStore(context: Context) {
         private const val KEY_TR_MODE = "translationMode"
         private const val KEY_TR_LEVEL = "keywordLevel"
         private const val KEY_AUTO_EXTEND = "autoExtend"
+        private const val KEY_PROXY_ENABLED = "proxyEnabled"
+        private const val KEY_PROXY_TYPE = "proxyType"
+        private const val KEY_PROXY_HOST = "proxyHost"
+        private const val KEY_PROXY_PORT = "proxyPort"
+        private const val KEY_PROXY_USER = "proxyUsername"
+        private const val KEY_PROXY_PASS = "proxyPassword"
+        private const val KEY_DL_WIFI_ONLY = "downloadWifiOnly"
+        private const val KEY_ASR_MODEL = "asrModel"
+        private const val KEY_ASR_WIFI = "asrWifiOnly"
+        private const val KEY_ASR_AUTO = "asrAuto"
+        private const val KEY_SPEED = "playbackSpeed"
+        private const val KEY_AUTO_REFRESH = "autoRefreshEnabled"
+        private const val KEY_AUTO_REFRESH_WIFI = "autoRefreshWifiOnly"
+        private const val KEY_CUSTOM_PRICE = "customPricePer1kTokens"
     }
 }

@@ -49,12 +49,30 @@ fun TranslationScreen(
     onSave: (Settings) -> Unit,
     onMode: (TranslationMode) -> Unit,
     onLevel: (KeywordLevel) -> Unit,
-    onAutoExtend: (Boolean) -> Unit
+    onAutoExtend: (Boolean) -> Unit,
+    /** 0.4.0 P0 收尾：连接测试（测正在编辑、还没保存的值）。 */
+    onTestConnection: (Settings) -> Unit = {},
+    testRunning: Boolean = false,
+    testResult: String? = null,
+    testOk: Boolean? = null,
+    onClearTestResult: () -> Unit = {}
 ) {
     var baseUrl by remember { mutableStateOf(settings.baseUrl) }
     var apiKey by remember { mutableStateOf(settings.apiKey) }
     var model by remember { mutableStateOf(settings.model) }
     var lang by remember { mutableStateOf(settings.targetLang) }
+    var customPrice by remember {
+        mutableStateOf(settings.customPricePer1kTokens.takeIf { it > 0f }?.toString() ?: "")
+    }
+
+    /** 当前正在编辑的完整设置（保存与测试都用它）。 */
+    fun editedSettings() = settings.copy(
+        baseUrl = baseUrl.trim(),
+        apiKey = apiKey.trim(),
+        model = model.trim(),
+        targetLang = lang.trim().ifBlank { "简体中文" },
+        customPricePer1kTokens = customPrice.toFloatOrNull()?.coerceAtLeast(0f) ?: 0f
+    )
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -67,16 +85,7 @@ fun TranslationScreen(
                     }
                 },
                 actions = {
-                    TextButton(onClick = {
-                        onSave(
-                            settings.copy(
-                                baseUrl = baseUrl.trim(),
-                                apiKey = apiKey.trim(),
-                                model = model.trim(),
-                                targetLang = lang.trim().ifBlank { "简体中文" }
-                            )
-                        )
-                    }) { Text("保存") }
+                    TextButton(onClick = { onSave(editedSettings()) }) { Text("保存") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background
@@ -130,6 +139,54 @@ fun TranslationScreen(
                 label = { Text("目标语言") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(Modifier.height(16.dp))
+            Text("连接测试", style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Button(
+                    enabled = !testRunning,
+                    onClick = { onTestConnection(editedSettings()) }
+                ) { Text(if (testRunning) "测试中…" else "测试连接") }
+                if (testResult != null) {
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(onClick = onClearTestResult) { Text("清除") }
+                }
+            }
+            if (testResult != null) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    testResult,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (testOk == true) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.error
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "只发一句 Hello 做试探，不翻整集、不写缓存；先点测试再保存也行，测的是上面正在填的值。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(Modifier.height(16.dp))
+            Text("费用预估", style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(
+                value = customPrice,
+                onValueChange = { customPrice = it.filter { c -> c.isDigit() || c == '.' }.take(8) },
+                label = { Text("每 1k token 单价（美元，可选）") },
+                placeholder = { Text("例如 0.01，留空用内置单价表") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "内置单价表（2026-11-18 快照，价格可能已变）：gpt-4o-mini \$0.15/\$0.60、deepseek-chat \$0.28/\$0.42、glm-4.7-flash 在 Z.ai 官方免费、Qwen2.5-7B-Instruct（硅基流动）\$0.05/\$0.05，均为每 1M token 输入/输出价；不在表里的模型只显示 token 数，填了上面这个单价就能算。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(Modifier.height(16.dp))

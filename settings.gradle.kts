@@ -11,6 +11,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // NewPipe Extractor（JitPack，无 Maven Central 坐标）
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
