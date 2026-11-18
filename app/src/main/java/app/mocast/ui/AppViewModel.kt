@@ -783,7 +783,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun consumeOpmlExport() = _ui.update { it.copy(opmlExportText = null) }
 
-    /** 推荐订阅：点一个订阅一个，订阅完留在首页（不像粘贴订阅那样跳进节目页）。 */
+    /** 推荐订阅：点一个订阅一个，订阅完留在当前页（不像粘贴订阅那样跳进节目页）。 */
     fun subscribeRecommended(feedUrl: String) {
         val url = feedUrl.trim()
         if (url.isBlank()) return

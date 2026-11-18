@@ -58,10 +58,7 @@ fun AppRoot(vm: AppViewModel) {
                     onSubmit = vm::addSubscription,
                     onOpenShow = vm::openShow,
                     onSettings = vm::openSettings,
-                    showMiniPlayer = showMiniPlayer,
-                    onSubscribeRecommended = vm::subscribeRecommended,
-                    subscribingFeedUrl = state.subscribingFeedUrl,
-                    subscribedFeedUrls = state.shows.map { it.feedUrl.trim() }.toSet()
+                    showMiniPlayer = showMiniPlayer
                 )
 
                 Screen.Settings -> SettingsScreen(
@@ -74,7 +71,10 @@ fun AppRoot(vm: AppViewModel) {
                     onImportOpml = { importOpmlLauncher.launch("*/*") },
                     onExportOpml = vm::prepareOpmlExport,
                     opmlImportSummary = state.opmlImportSummary,
-                    onDismissOpmlSummary = vm::dismissOpmlSummary
+                    onDismissOpmlSummary = vm::dismissOpmlSummary,
+                    onSubscribeRecommended = vm::subscribeRecommended,
+                    subscribingFeedUrl = state.subscribingFeedUrl,
+                    subscribedFeedUrls = state.shows.map { it.feedUrl.trim() }.toSet()
                 )
 
                 Screen.Translation -> TranslationScreen(

@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
 import app.mocast.BuildConfig
 import app.mocast.asr.AsrModel
+import app.mocast.data.RecommendedShows
 import app.mocast.data.Settings
 import app.mocast.data.ThemeMode
 import app.mocast.net.OpmlImportSummary
@@ -75,7 +76,11 @@ fun SettingsScreen(
     onImportOpml: () -> Unit = {},
     onExportOpml: () -> Unit = {},
     opmlImportSummary: OpmlImportSummary? = null,
-    onDismissOpmlSummary: () -> Unit = {}
+    onDismissOpmlSummary: () -> Unit = {},
+    /** 推荐节目：设置页“订阅”组内展开，不上首页、不自动订阅，订阅完留在本页。 */
+    onSubscribeRecommended: (String) -> Unit = {},
+    subscribingFeedUrl: String? = null,
+    subscribedFeedUrls: Set<String> = emptySet()
 ) {
     val settings = state.settings
     val version = displayVersion(BuildConfig.VERSION_NAME)
@@ -129,6 +134,33 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+                // 推荐节目：只在设置里展开，首页不出现；点一个订阅一个，不自动订阅。
+                var showRecommended by remember { mutableStateOf(false) }
+                SettingRow(
+                    icon = Icons.Default.PlayArrow,
+                    title = "推荐节目",
+                    value = "7 个精选 · 手动挑选"
+                ) { showRecommended = !showRecommended }
+                if (showRecommended) {
+                    Column(
+                        modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            "手工挑选的 7 个节目，只在你点进来时才看得到，不会出现在首页，也不会自动订阅。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        RecommendedShows.all.forEach { show ->
+                            RecommendedCard(
+                                show = show,
+                                subscribed = show.feedUrl.trim() in subscribedFeedUrls,
+                                subscribing = subscribingFeedUrl == show.feedUrl,
+                                onSubscribe = { onSubscribeRecommended(show.feedUrl) }
+                            )
+                        }
+                    }
                 }
             }
 
@@ -511,6 +543,74 @@ private fun ThemeSwitcher(mode: ThemeMode, onMode: (ThemeMode) -> Unit) {
                     .clickable { onMode(value) }
                     .padding(horizontal = 11.dp, vertical = 5.dp)
             )
+        }
+    }
+}
+
+@Composable
+private fun RecommendedCard(
+    show: app.mocast.data.RecommendedShow,
+    subscribed: Boolean,
+    subscribing: Boolean,
+    onSubscribe: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    show.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Text(
+                        show.category,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                show.blurb,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "RSS 来源：${show.source}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(
+                    enabled = !subscribed && !subscribing,
+                    onClick = onSubscribe
+                ) {
+                    Text(
+                        when {
+                            subscribed -> "已订阅"
+                            subscribing -> "订阅中…"
+                            else -> "订阅"
+                        }
+                    )
+                }
+            }
         }
     }
 }
